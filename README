@@ -22,3 +22,9 @@ Then make your hdf5 application as usual, no need to change it's code or Makefil
 Trace format
 ==================
 Trace file is plain text. By default, it has two column, function name index and function duration in usec. You need to check the dictionary file (func_dic_733.txt) for the names.
+
+If you want other info in the trace, change the prov_write() function sprintf line. 
+For example:
+	    sprintf(pline, "[%s][User:%s][PID:%d][TID:%llu][Func:%s][%luus]\n", time, helper_in->user_name, helper_in->pid, helper_in->tid, msg, duration);
+		//msg is captured function name
+

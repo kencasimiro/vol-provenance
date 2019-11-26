@@ -2386,6 +2386,7 @@ H5VL_provenance_wrap_object(void *under_under_in, H5I_type_t obj_type, void *_wr
     /* Wrap the object with the underlying VOL */
     m1 = get_time_usec();
     under = H5VLwrap_object(under_under_in, obj_type, wrap_ctx->under_vol_id, wrap_ctx->under_wrap_ctx);
+
     m2 = get_time_usec();
 
     if(under) {
@@ -3065,7 +3066,7 @@ H5VL_provenance_dataset_write(void *dset, hid_t mem_type_id, hid_t mem_space_id,
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
-
+//H5VL_provenance_t: A envelop
     H5VL_provenance_t *o = (H5VL_provenance_t *)dset;
 #ifdef H5_HAVE_PARALLEL
     H5FD_mpio_xfer_t xfer_mode = H5FD_MPIO_INDEPENDENT;
@@ -3083,6 +3084,9 @@ H5VL_provenance_dataset_write(void *dset, hid_t mem_type_id, hid_t mem_space_id,
     H5Pget_dxpl_mpio(plist_id, &xfer_mode);
 #endif /* H5_HAVE_PARALLEL */
 
+//H5VLdataset_write: framework
+// VOL B do IO, so A ask B to write.    o->under_object is a B envelop.
+    // reuse A envelop
     m1 = get_time_usec();
     ret_value = H5VLdataset_write(o->under_object, o->under_vol_id, mem_type_id, mem_space_id, file_space_id, plist_id, buf, req);
     m2 = get_time_usec();

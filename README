@@ -28,3 +28,8 @@ For example:
 	    sprintf(pline, "[%s][User:%s][PID:%d][TID:%llu][Func:%s][%luus]\n", time, helper_in->user_name, helper_in->pid, helper_in->tid, msg, duration);
 		//msg is captured function name
 
+
+Running testcase application (VPIC)
+==================
+Makefile contains the testcase section that complies VPIC and links h5prov to it. Default "make" builds the library and testcase. To run a simplified test case:
+./vpicio_uni_h5 ./my_data.dat 2 2 1 ./my_trace.log

@@ -40,7 +40,6 @@
 
 #include "hdf5.h"
 #include "H5VLprovnc.h"
-//#include "prov_util.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -48,7 +47,16 @@
 #include <sys/time.h>
 #include <assert.h>
 #include <mpi.h>
+#include <time.h>
 // A simple timer based on gettimeofday
+
+static
+unsigned long get_time_usec(void) {
+    struct timeval tp;
+
+    gettimeofday(&tp, NULL);
+    return (unsigned long)((1000000 * tp.tv_sec) + tp.tv_usec);
+}
 
 #define DTYPE float
 
@@ -223,7 +231,7 @@ hid_t fileaccess_mod(const char* log_file_path){
     herr_t status;
 
     fapl_id = H5Pcreate(H5P_FILE_ACCESS);
-    if(fapl_id == H5P_DEFAULT);
+//    if(fapl_id == H5P_DEFAULT);
        // printf("fapl_id == H5P_DEFAULT = %lld \n", fapl_id);
 
     status = H5Pget_vol_id(fapl_id, &under_vol_id);
@@ -239,14 +247,14 @@ hid_t fileaccess_mod(const char* log_file_path){
     hid_t connector_id = -1;
 
     
-    if((connector_is_registered = H5VLis_connector_registered("provenance")) < 0){
+    if((connector_is_registered = H5VLis_connector_registered_by_name("provenance")) < 0){
         //printf("(connector is registered) < 0 \n");
         goto done;
     }
     else if(connector_is_registered) {
         //printf("connector is registered \n");
         /* Retrieve the ID of the already-registered VOL connector */
-         if((connector_id = H5VLget_connector_id("provenance")) < 0){
+         if((connector_id = H5VLget_connector_id_by_name("provenance")) < 0){
             printf("can not get vol id of provenance \n");
              goto error;
          }

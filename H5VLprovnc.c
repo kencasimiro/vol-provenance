@@ -1252,7 +1252,7 @@ dataset_prov_info_t * add_dataset_node(unsigned long obj_file_no,
     assert(dset);
     assert(dset->under_object);
     assert(file_info_in);
-
+	
     if (obj_file_no != file_info_in->file_no) {//creating a dataset from an external place
         file_prov_info_t* external_home_file;
 
@@ -1270,7 +1270,7 @@ dataset_prov_info_t * add_dataset_node(unsigned long obj_file_no,
     cur = file_info->opened_datasets;
     while (cur) {
         if (!H5VLtoken_cmp(dset->under_object, dset->under_vol_id,            
-            &(cur->obj_info.token), &token, &cmp_value))
+            &(cur->obj_info.token), &token, &cmp_value) && !strcmp(ds_name, cur->obj_info.name))
             break;
         cur = cur->next;
     }
@@ -1319,7 +1319,7 @@ int rm_dataset_node(prov_helper_t *helper, void *under_obj, hid_t under_vol_id, 
     last = cur;
     while(cur){
 	if (!H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token), 
-            &(dset_info->obj_info.token), &cmp_value)) {//node found
+            &(dset_info->obj_info.token), &cmp_value) && !strcmp(dset_info->obj_info.name, cur->obj_info.name)) {//node found
             //special case: first node is the target, ==cur
             if(cur == file_info->opened_datasets)
                 file_info->opened_datasets = file_info->opened_datasets->next;
@@ -1537,7 +1537,7 @@ dataset_prov_info_t * new_ds_prov_info(void* under_object, hid_t vol_id, H5O_tok
 
     assert(under_object);
     assert(file_info);
-
+	
     ds_info = new_dataset_info(file_info, ds_name, token);
 
     dataset_get_wrapper(under_object, vol_id, H5VL_DATASET_GET_TYPE, dxpl_id, req, &dt_id);
@@ -1802,7 +1802,7 @@ int prov_write(prov_helper_t* helper_in, const char* msg, unsigned long duration
                 break;
     }
 
-    sprintf(pline, "%u %lu\n",  genHash(msg), duration);//assume less than 64 functions
+    sprintf(pline, "%s %lu\n",  msg, duration);//assume less than 64 functions
     //printf("Func name:[%s], hash index = [%u], overhead = [%lu]\n",  msg, genHash(msg), duration);
     switch(helper_in->prov_level){
         case File_only:
@@ -3108,6 +3108,10 @@ H5VL_provenance_dataset_write(void *dset, hid_t mem_type_id, hid_t mem_space_id,
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
+	  int ndim;
+	  hsize_t total_dims = 1;
+	  hsize_t dims[H5S_MAX_RANK];
+	  size_t type_size;
 //H5VL_provenance_t: A envelop
     H5VL_provenance_t *o = (H5VL_provenance_t *)dset;
 #ifdef H5_HAVE_PARALLEL
@@ -3132,6 +3136,16 @@ H5VL_provenance_dataset_write(void *dset, hid_t mem_type_id, hid_t mem_space_id,
     m1 = get_time_usec();
     ret_value = H5VLdataset_write(o->under_object, o->under_vol_id, mem_type_id, mem_space_id, file_space_id, plist_id, buf, req);
     m2 = get_time_usec();
+	
+	ndim = H5Sget_simple_extent_ndims(mem_space_id);
+	printf("ndim = %d\n", ndim);
+	H5Sget_simple_extent_dims(mem_space_id, dims, NULL);
+	int i;
+	for(i=0; i<ndim; i++)
+		total_dims *= dims[i];
+	printf("total_dims = %llu\n", total_dims);
+	type_size = H5Tget_size(mem_type_id);
+	printf("type_size = %lu\n", type_size);
 
     /* Check for async request */
     if(req && *req)

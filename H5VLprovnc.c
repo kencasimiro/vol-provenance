@@ -332,6 +332,10 @@ static herr_t H5VL_provenance_request_specific(void *req, H5VL_request_specific_
 static herr_t H5VL_provenance_request_optional(void *req, H5VL_attr_optional_t opt_type, va_list arguments);
 static herr_t H5VL_provenance_request_free(void *req);
 
+/* Token callbacks */
+static herr_t H5VL_provenance_token_cmp(void *obj, const H5O_token_t *token1, const H5O_token_t *token2, int *cmp_value);
+static herr_t H5VL_provenance_token_to_str(void *obj, H5I_type_t obj_type, const H5O_token_t *token, char **token_str);
+static herr_t H5VL_provenance_token_from_str(void *obj, H5I_type_t obj_type, const char *token_str, H5O_token_t *token);
 
 /*******************/
 /* Local variables */
@@ -420,8 +424,8 @@ static const H5VL_class_t H5VL_provenance_cls = {
         H5VL_provenance_object_optional,            /* optional */
     },
     {                                           /* introspect_cls */
-	NULL,                                       /* get_conn_cls */
-	H5VL_provenance_introspect_opt_query,       /* opt_query */
+        NULL,                                       /* get_conn_cls */
+        H5VL_provenance_introspect_opt_query,       /* opt_query */
     },
     {                                           /* request_cls */
         H5VL_provenance_request_wait,               /* wait */
@@ -432,15 +436,15 @@ static const H5VL_class_t H5VL_provenance_cls = {
         H5VL_provenance_request_free                /* free */
     },
     {                                           /* blobs_cls */
-	NULL,
-	NULL,
-	NULL,
-	NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
     },
     {                                           /* token_cls */
-	NULL,
-	NULL,
-	NULL,
+        H5VL_provenance_token_cmp,                  /* cmp */
+        H5VL_provenance_token_to_str,               /* to_str */
+        H5VL_provenance_token_from_str              /* from_str */
     },
     NULL                                        /* optional */
 };
@@ -857,15 +861,16 @@ datatype_prov_info_t * add_dtype_node(file_prov_info_t *file_info,
 {
     unsigned long start = get_time_usec();
     datatype_prov_info_t *cur;
-    int cmp_value = 0;
+    int cmp_value;
 
     assert(file_info);
 
     // Find datatype in linked list of opened datatypes
     cur = file_info->opened_dtypes;
     while (cur) {
-        if (!H5VLtoken_cmp(dtype->under_object, dtype->under_vol_id, 
-            &(cur->obj_info.token), &token, &cmp_value))
+        H5VLtoken_cmp(dtype->under_object, dtype->under_vol_id,
+                      &(cur->obj_info.token), &token, &cmp_value);
+        if (cmp_value == 0)
             break;
         cur = cur->next;
     }
@@ -896,7 +901,7 @@ int rm_dtype_node(prov_helper_t *helper, void *under, hid_t under_vol_id, dataty
     file_prov_info_t *file_info;
     datatype_prov_info_t *cur;
     datatype_prov_info_t *last;
-    int cmp_value = 0;
+    int cmp_value;
 
     // Decrement refcount
     dtype_info->obj_info.ref_cnt--;
@@ -914,8 +919,9 @@ int rm_dtype_node(prov_helper_t *helper, void *under, hid_t under_vol_id, dataty
     cur = file_info->opened_dtypes;
     last = cur;
     while(cur) {
-        if (!H5VLtoken_cmp(under, under_vol_id, &(cur->obj_info.token), 
-            &(dtype_info->obj_info.token), &cmp_value)) {
+        H5VLtoken_cmp(under, under_vol_id, &(cur->obj_info.token),
+                      &(dtype_info->obj_info.token), &cmp_value);
+        if (cmp_value == 0) {
             //special case: first node is the target, ==cur
             if(cur == file_info->opened_dtypes)
                 file_info->opened_dtypes = file_info->opened_dtypes->next;
@@ -950,13 +956,14 @@ group_prov_info_t *add_grp_node(file_prov_info_t *file_info,
     group_prov_info_t *cur;
     unsigned long start = get_time_usec();
     assert(file_info);
-    int cmp_value = 0;
+    int cmp_value;
 
     // Find group in linked list of opened groups
     cur = file_info->opened_grps;
     while (cur) {
-        if (!H5VLtoken_cmp(upper_o->under_object, upper_o->under_vol_id, 
-            &(cur->obj_info.token), &token, &cmp_value))
+        H5VLtoken_cmp(upper_o->under_object, upper_o->under_vol_id,
+                      &(cur->obj_info.token), &token, &cmp_value);
+        if (cmp_value == 0)
             break;
         cur = cur->next;
     }
@@ -986,7 +993,7 @@ int rm_grp_node(prov_helper_t *helper, void *under_obj, hid_t under_vol_id, grou
     file_prov_info_t *file_info;
     group_prov_info_t *cur;
     group_prov_info_t *last;
-    int cmp_value = 0;
+    int cmp_value;
 
     // Decrement refcount
     grp_info->obj_info.ref_cnt--;
@@ -1004,8 +1011,9 @@ int rm_grp_node(prov_helper_t *helper, void *under_obj, hid_t under_vol_id, grou
     cur = file_info->opened_grps;
     last = cur;
     while(cur) {
-        if (!H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token), 
-            &(grp_info->obj_info.token), &cmp_value)) { //node found
+        H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token),
+                      &(grp_info->obj_info.token), &cmp_value);
+        if (cmp_value == 0) { //node found
             //special case: first node is the target, ==cur
             if (cur == file_info->opened_grps)
                 file_info->opened_grps = file_info->opened_grps->next;
@@ -1038,15 +1046,16 @@ attribute_prov_info_t *add_attr_node(file_prov_info_t *file_info,
     H5VL_provenance_t *attr, const char *obj_name, H5O_token_t token)
 {   unsigned long start = get_time_usec();
     attribute_prov_info_t *cur;
-    int cmp_value = 0;
+    int cmp_value;
 
     assert(file_info);
 
     // Find attribute in linked list of opened attributes
     cur = file_info->opened_attrs;
     while (cur) {
-        if (!H5VLtoken_cmp(attr->under_object, attr->under_vol_id, 
-            &(cur->obj_info.token), &token, &cmp_value))
+        H5VLtoken_cmp(attr->under_object, attr->under_vol_id,
+                      &(cur->obj_info.token), &token, &cmp_value);
+        if (cmp_value == 0)
             break;
         cur = cur->next;
     }
@@ -1076,7 +1085,7 @@ int rm_attr_node(prov_helper_t *helper, void *under_obj, hid_t under_vol_id, att
     file_prov_info_t *file_info;
     attribute_prov_info_t *cur;
     attribute_prov_info_t *last;
-    int cmp_value = 0;
+    int cmp_value;
 
     // Decrement refcount
     attr_info->obj_info.ref_cnt--;
@@ -1094,9 +1103,9 @@ int rm_attr_node(prov_helper_t *helper, void *under_obj, hid_t under_vol_id, att
     cur = file_info->opened_attrs;
     last = cur;
     while(cur) {
-        if (!H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token), 
-            &(attr_info->obj_info.token), &cmp_value) 
-            && 0 == strcmp(cur->obj_info.name, attr_info->obj_info.name)) { //node found
+        H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token), 
+                      &(attr_info->obj_info.token), &cmp_value);
+	if (cmp_value == 0) { //node found
             //special case: first node is the target, ==cur
             if(cur == file_info->opened_attrs)
                 file_info->opened_attrs = file_info->opened_attrs->next;
@@ -1247,7 +1256,7 @@ dataset_prov_info_t * add_dataset_node(unsigned long obj_file_no,
     unsigned long start = get_time_usec();
     file_prov_info_t* file_info;
     dataset_prov_info_t* cur;
-    int cmp_value = 0;
+    int cmp_value;
 
     assert(dset);
     assert(dset->under_object);
@@ -1269,9 +1278,11 @@ dataset_prov_info_t * add_dataset_node(unsigned long obj_file_no,
     // Find dataset in linked list of opened datasets
     cur = file_info->opened_datasets;
     while (cur) {
-        if (!H5VLtoken_cmp(dset->under_object, dset->under_vol_id,            
-            &(cur->obj_info.token), &token, &cmp_value) && !strcmp(ds_name, cur->obj_info.name))
-            break;
+        H5VLtoken_cmp(dset->under_object, dset->under_vol_id,
+                      &(cur->obj_info.token), &token, &cmp_value);
+        if (cmp_value == 0)
+	    break;
+
         cur = cur->next;
     }
 
@@ -1301,7 +1312,7 @@ int rm_dataset_node(prov_helper_t *helper, void *under_obj, hid_t under_vol_id, 
     file_prov_info_t *file_info;
     dataset_prov_info_t *cur;
     dataset_prov_info_t *last;
-    int cmp_value = 0;
+    int cmp_value;
 
     // Decrement refcount
     dset_info->obj_info.ref_cnt--;
@@ -1318,8 +1329,9 @@ int rm_dataset_node(prov_helper_t *helper, void *under_obj, hid_t under_vol_id, 
     cur = file_info->opened_datasets;
     last = cur;
     while(cur){
-	if (!H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token), 
-            &(dset_info->obj_info.token), &cmp_value) && !strcmp(dset_info->obj_info.name, cur->obj_info.name)) {//node found
+        H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token), 
+                      &(dset_info->obj_info.token), &cmp_value);
+	if (cmp_value == 0) {//node found
             //special case: first node is the target, ==cur
             if(cur == file_info->opened_datasets)
                 file_info->opened_datasets = file_info->opened_datasets->next;
@@ -3108,10 +3120,6 @@ H5VL_provenance_dataset_write(void *dset, hid_t mem_type_id, hid_t mem_space_id,
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
-	  int ndim;
-	  hsize_t total_dims = 1;
-	  hsize_t dims[H5S_MAX_RANK];
-	  size_t type_size;
 //H5VL_provenance_t: A envelop
     H5VL_provenance_t *o = (H5VL_provenance_t *)dset;
 #ifdef H5_HAVE_PARALLEL
@@ -3136,16 +3144,6 @@ H5VL_provenance_dataset_write(void *dset, hid_t mem_type_id, hid_t mem_space_id,
     m1 = get_time_usec();
     ret_value = H5VLdataset_write(o->under_object, o->under_vol_id, mem_type_id, mem_space_id, file_space_id, plist_id, buf, req);
     m2 = get_time_usec();
-	
-	ndim = H5Sget_simple_extent_ndims(mem_space_id);
-	printf("ndim = %d\n", ndim);
-	H5Sget_simple_extent_dims(mem_space_id, dims, NULL);
-	int i;
-	for(i=0; i<ndim; i++)
-		total_dims *= dims[i];
-	printf("total_dims = %llu\n", total_dims);
-	type_size = H5Tget_size(mem_type_id);
-	printf("type_size = %lu\n", type_size);
 
     /* Check for async request */
     if(req && *req)
@@ -5575,3 +5573,127 @@ H5VL_provenance_request_free(void *obj)
     TOTAL_PROV_OVERHEAD += (get_time_usec() - start - (m2 - m1));
     return ret_value;
 } /* end H5VL_provenance_request_free() */
+
+/*---------------------------------------------------------------------------
+ * Function:    H5VL_provenance_token_cmp
+ *
+ * Purpose:     Compare two of the connector's object tokens, setting
+ *              *cmp_value, following the same rules as strcmp().
+ *
+ * Return:      Success:    0
+ *              Failure:    -1
+ *
+ *---------------------------------------------------------------------------
+ */
+static herr_t
+H5VL_provenance_token_cmp(void *obj, const H5O_token_t *token1,
+    const H5O_token_t *token2, int *cmp_value)
+{
+    H5VL_provenance_t *o = (H5VL_provenance_t *)obj;
+    herr_t ret_value;
+
+#ifdef ENABLE_PROVNC_LOGGING
+    printf("------- PASS THROUGH VOL TOKEN Compare\n");
+#endif
+
+    /* Sanity checks */
+    assert(obj);
+    assert(token1);
+    assert(token2);
+    assert(cmp_value);
+
+    ret_value = H5VLtoken_cmp(o->under_object, o->under_vol_id, token1, token2, cmp_value);
+
+    return ret_value;
+} /* end H5VL_provenance_token_cmp() */
+
+
+/*---------------------------------------------------------------------------
+ * Function:    H5VL_provenance_token_to_str
+ *
+ * Purpose:     Serialize the connector's object token into a string.
+ *
+ * Return:      Success:    0
+ *              Failure:    -1
+ *
+ *---------------------------------------------------------------------------
+ */
+static herr_t
+H5VL_provenance_token_to_str(void *obj, H5I_type_t obj_type,
+    const H5O_token_t *token, char **token_str)
+{
+    H5VL_provenance_t *o = (H5VL_provenance_t *)obj;
+    herr_t ret_value;
+
+#ifdef ENABLE_PROVNC_LOGGING
+    printf("------- PASS THROUGH VOL TOKEN To string\n");
+#endif
+
+    /* Sanity checks */
+    assert(obj);
+    assert(token);
+    assert(token_str);
+
+    ret_value = H5VLtoken_to_str(o->under_object, obj_type, o->under_vol_id, token, token_str);
+
+    return ret_value;
+} /* end H5VL_provenance_token_to_str() */
+
+
+/*---------------------------------------------------------------------------
+ * Function:    H5VL_provenance_token_from_str
+ *
+ * Purpose:     Deserialize the connector's object token from a string.
+ *
+ * Return:      Success:    0
+ *              Failure:    -1
+ *
+ *---------------------------------------------------------------------------
+ */
+static herr_t
+H5VL_provenance_token_from_str(void *obj, H5I_type_t obj_type,
+    const char *token_str, H5O_token_t *token)
+{
+    H5VL_provenance_t *o = (H5VL_provenance_t *)obj;
+    herr_t ret_value;
+
+#ifdef ENABLE_PROVNC_LOGGING
+    printf("------- PASS THROUGH VOL TOKEN From string\n");
+#endif
+
+    /* Sanity checks */
+    assert(obj);
+    assert(token);
+    assert(token_str);
+
+    ret_value = H5VLtoken_from_str(o->under_object, obj_type, o->under_vol_id, token_str, token);
+
+    return ret_value;
+} /* end H5VL_provenance_token_from_str() */
+
+
+/*-------------------------------------------------------------------------
+ * Function:    H5VL_provenance_optional
+ *
+ * Purpose:     Handles the generic 'optional' callback
+ *
+ * Return:      SUCCEED / FAIL
+ *
+ *-------------------------------------------------------------------------
+ */
+herr_t
+H5VL_provenance_optional(void *obj, int op_type, hid_t dxpl_id, void **req,
+    va_list arguments)
+{
+    H5VL_provenance_t *o = (H5VL_provenance_t *)obj;
+    herr_t ret_value;
+
+#ifdef ENABLE_PROVNC_LOGGING
+    printf("------- PASS THROUGH VOL generic Optional\n");
+#endif
+
+    ret_value = H5VLoptional(o->under_object, o->under_vol_id, op_type,
+        dxpl_id, req, arguments);
+
+    return ret_value;
+} /* end H5VL_provenance_optional() */

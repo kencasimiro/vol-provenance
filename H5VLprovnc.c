@@ -1932,10 +1932,10 @@ H5VL_provenance_free_obj(H5VL_provenance_t *obj)
 /*-------------------------------------------------------------------------
  * Function:    H5VL_provenance_register
  *
- * Purpose:     Register the pass-through VOL connector and retrieve an ID
+ * Purpose:     Register the provenance VOL connector and retrieve an ID
  *              for it.
  *
- * Return:      Success:    The ID for the pass-through VOL connector
+ * Return:      Success:    The ID for the provenance VOL connector
  *              Failure:    -1
  *
  * Programmer:  Quincey Koziol
@@ -1951,7 +1951,7 @@ H5VL_provenance_register(void)
     /* Clear the error stack */
     H5Eclear2(H5E_DEFAULT);
 
-    /* Singleton register the pass-through VOL connector ID */
+    /* Singleton register the provenance VOL connector ID */
     if(H5I_VOL != H5Iget_type(prov_connector_id_global))
         prov_connector_id_global = H5VLregister_connector(&H5VL_provenance_cls, H5P_DEFAULT);
 
@@ -2299,7 +2299,7 @@ H5VL_provenance_str_to_info(const char *str, void **_info)
 
     } /* end else */
 
-    /* Allocate new pass-through VOL connector info and set its fields */
+    /* Allocate new provenance VOL connector info and set its fields */
     info = (H5VL_provenance_info_t *)calloc(1, sizeof(H5VL_provenance_info_t));
     info->under_vol_id = under_vol_id;
     info->under_vol_info = under_vol_info;

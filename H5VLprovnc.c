@@ -874,8 +874,9 @@ datatype_prov_info_t * add_dtype_node(file_prov_info_t *file_info,
     // Find datatype in linked list of opened datatypes
     cur = file_info->opened_dtypes;
     while (cur) {
-        H5VLtoken_cmp(dtype->under_object, dtype->under_vol_id,
-                      &(cur->obj_info.token), &token, &cmp_value);
+        if (H5VLtoken_cmp(dtype->under_object, dtype->under_vol_id,
+		          &(cur->obj_info.token), &token, &cmp_value) < 0)
+	    fprintf(stderr, "H5VLtoken_cmp error");
         if (cmp_value == 0)
             break;
         cur = cur->next;
@@ -925,8 +926,9 @@ int rm_dtype_node(prov_helper_t *helper, void *under, hid_t under_vol_id, dataty
     cur = file_info->opened_dtypes;
     last = cur;
     while(cur) {
-        H5VLtoken_cmp(under, under_vol_id, &(cur->obj_info.token),
-                      &(dtype_info->obj_info.token), &cmp_value);
+        if (H5VLtoken_cmp(under, under_vol_id, &(cur->obj_info.token),
+                          &(dtype_info->obj_info.token), &cmp_value) < 0)
+	    fprintf(stderr, "H5VLtoken_cmp error");
         if (cmp_value == 0) {
             //special case: first node is the target, ==cur
             if(cur == file_info->opened_dtypes)
@@ -967,8 +969,9 @@ group_prov_info_t *add_grp_node(file_prov_info_t *file_info,
     // Find group in linked list of opened groups
     cur = file_info->opened_grps;
     while (cur) {
-        H5VLtoken_cmp(upper_o->under_object, upper_o->under_vol_id,
-                      &(cur->obj_info.token), &token, &cmp_value);
+        if (H5VLtoken_cmp(upper_o->under_object, upper_o->under_vol_id,
+                          &(cur->obj_info.token), &token, &cmp_value) < 0)
+	    fprintf(stderr, "H5VLtoken_cmp error");
         if (cmp_value == 0)
             break;
         cur = cur->next;
@@ -1017,8 +1020,9 @@ int rm_grp_node(prov_helper_t *helper, void *under_obj, hid_t under_vol_id, grou
     cur = file_info->opened_grps;
     last = cur;
     while(cur) {
-        H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token),
-                      &(grp_info->obj_info.token), &cmp_value);
+        if (H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token),
+                          &(grp_info->obj_info.token), &cmp_value) < 0)
+	    fprintf(stderr, "H5VLtoken_cmp error");
         if (cmp_value == 0) { //node found
             //special case: first node is the target, ==cur
             if (cur == file_info->opened_grps)
@@ -1059,8 +1063,9 @@ attribute_prov_info_t *add_attr_node(file_prov_info_t *file_info,
     // Find attribute in linked list of opened attributes
     cur = file_info->opened_attrs;
     while (cur) {
-        H5VLtoken_cmp(attr->under_object, attr->under_vol_id,
-                      &(cur->obj_info.token), &token, &cmp_value);
+        if (H5VLtoken_cmp(attr->under_object, attr->under_vol_id,
+                          &(cur->obj_info.token), &token, &cmp_value) < 0)
+	    fprintf(stderr, "H5VLtoken_cmp error");
         if (cmp_value == 0)
             break;
         cur = cur->next;
@@ -1109,8 +1114,9 @@ int rm_attr_node(prov_helper_t *helper, void *under_obj, hid_t under_vol_id, att
     cur = file_info->opened_attrs;
     last = cur;
     while(cur) {
-        H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token), 
-                      &(attr_info->obj_info.token), &cmp_value);
+	if (H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token),
+                          &(attr_info->obj_info.token), &cmp_value) < 0)
+	    fprintf(stderr, "H5VLtoken_cmp error");
 	if (cmp_value == 0) { //node found
             //special case: first node is the target, ==cur
             if(cur == file_info->opened_attrs)
@@ -1284,8 +1290,9 @@ dataset_prov_info_t * add_dataset_node(unsigned long obj_file_no,
     // Find dataset in linked list of opened datasets
     cur = file_info->opened_datasets;
     while (cur) {
-        H5VLtoken_cmp(dset->under_object, dset->under_vol_id,
-                      &(cur->obj_info.token), &token, &cmp_value);
+        if (H5VLtoken_cmp(dset->under_object, dset->under_vol_id,
+                          &(cur->obj_info.token), &token, &cmp_value) < 0)
+	    fprintf(stderr, "H5VLtoken_cmp error");
         if (cmp_value == 0)
 	    break;
 
@@ -1335,8 +1342,9 @@ int rm_dataset_node(prov_helper_t *helper, void *under_obj, hid_t under_vol_id, 
     cur = file_info->opened_datasets;
     last = cur;
     while(cur){
-        H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token), 
-                      &(dset_info->obj_info.token), &cmp_value);
+        if (H5VLtoken_cmp(under_obj, under_vol_id, &(cur->obj_info.token),
+                          &(dset_info->obj_info.token), &cmp_value) < 0)
+	    fprintf(stderr, "H5VLtoken_cmp error");
 	if (cmp_value == 0) {//node found
             //special case: first node is the target, ==cur
             if(cur == file_info->opened_datasets)

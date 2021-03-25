@@ -1,5 +1,5 @@
 #Your HDF5 install path
-HDF5_DIR=/Users/koziol/HDF5/github/hdfgroup/develop/build_parallel_debug/hdf5
+HDF5_DIR=/Users/koziol/HDF5/github/hpc-io/async_vol_register_optional/build_parallel_debug/hdf5
 
 CC=mpicc
 #CC=gcc-10

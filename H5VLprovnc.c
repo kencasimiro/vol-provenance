@@ -39,6 +39,7 @@
 #include <unistd.h>
 
 #include "hdf5.h"
+#include "hdf5dev.h"
 #include "H5VLprovnc.h"
 
 /**********/
@@ -231,8 +232,6 @@ static prov_helper_t* PROV_HELPER = NULL;
 /* Helper routines  */
 static herr_t H5VL_provenance_file_specific_reissue(void *obj, hid_t connector_id,
     H5VL_file_specific_t specific_type, hid_t dxpl_id, void **req, ...);  //TOTAL_PROV_OVERHEAD is not recorded.
-static herr_t H5VL_provenance_request_specific_reissue(void *obj, hid_t connector_id,
-    H5VL_request_specific_t specific_type, ...); //TOTAL_PROV_OVERHEAD is not recorded.
 static herr_t H5VL_provenance_link_create_reissue(H5VL_link_create_type_t create_type,
     void *obj, const H5VL_loc_params_t *loc_params, hid_t connector_id,
     hid_t lcpl_id, hid_t lapl_id, hid_t dxpl_id, void **req, ...);
@@ -322,6 +321,7 @@ static herr_t H5VL_provenance_object_specific(void *obj, const H5VL_loc_params_t
 static herr_t H5VL_provenance_object_optional(void *obj, H5VL_attr_optional_t opt_type, hid_t dxpl_id, void **req, va_list arguments);
 
 /* Container/connector introspection callbacks */
+static herr_t H5VL_provenance_introspect_get_cap_flags(const void *info, unsigned *cap_flags);
 static herr_t H5VL_provenance_introspect_opt_query(void *obj, H5VL_subclass_t cls, int opt_type, uint64_t *flags);
 
 /* Async request callbacks */
@@ -432,6 +432,7 @@ static const H5VL_class_t H5VL_provenance_cls = {
     },
     {                                           /* introspect_cls */
         NULL,                                       /* get_conn_cls */
+        H5VL_provenance_introspect_get_cap_flags,   /* get_cap_flags */
         H5VL_provenance_introspect_opt_query,       /* opt_query */
     },
     {                                           /* request_cls */
@@ -5194,6 +5195,36 @@ H5VL_provenance_object_optional(void *obj, H5VL_attr_optional_t opt_type,
     return ret_value;
 } /* end H5VL_provenance_object_optional() */
 
+/*-------------------------------------------------------------------------
+ * Function:    H5VL_provenance_introspect_get_cap_flags
+ *
+ * Purpose:     Query the capability flags for this connector and any
+ *              underlying connector(s).
+ *
+ * Return:      SUCCEED / FAIL
+ *
+ *-------------------------------------------------------------------------
+ */
+herr_t
+H5VL_provenance_introspect_get_cap_flags(const void *_info, unsigned *cap_flags)
+{
+    const H5VL_provenance_info_t *info = (const H5VL_provenance_info_t *)_info;
+    herr_t                          ret_value;
+
+#ifdef ENABLE_PROVNC_LOGGING
+    printf("------- PROVENANCE VOL INTROSPECT GetCapFlags\n");
+#endif
+
+    /* Invoke the query on the underlying VOL connector */
+    ret_value = H5VLintrospect_get_cap_flags(info->under_vol_info, info->under_vol_id, cap_flags);
+
+    /* Bitwise OR our capability flags in */
+    if (ret_value >= 0)
+        *cap_flags |= H5VL_provenance_cls.cap_flags;
+
+    return ret_value;
+} /* end H5VL_provenance_introspect_get_cap_flags() */
+
 
 /*-------------------------------------------------------------------------
  * Function:    H5VL_provenance_introspect_opt_query
@@ -5346,32 +5377,6 @@ H5VL_provenance_request_cancel(void *obj, H5VL_request_status_t *status)
 
 
 /*-------------------------------------------------------------------------
- * Function:    H5VL_provenance_request_specific_reissue
- *
- * Purpose:     Re-wrap vararg arguments into a va_list and reissue the
- *              request specific callback to the underlying VOL connector.
- *
- * Return:      Success:    0
- *              Failure:    -1
- *
- *-------------------------------------------------------------------------
- */
-static herr_t 
-H5VL_provenance_request_specific_reissue(void *obj, hid_t connector_id,
-    H5VL_request_specific_t specific_type, ...)
-{
-    va_list arguments;
-    herr_t ret_value;
-
-    va_start(arguments, specific_type);
-    ret_value = H5VLrequest_specific(obj, connector_id, specific_type, arguments);
-    va_end(arguments);
-
-    return ret_value;
-} /* end H5VL_provenance_request_specific_reissue() */
-
-
-/*-------------------------------------------------------------------------
  * Function:    H5VL_provenance_request_specific
  *
  * Purpose:     Specific operation on a request
@@ -5385,131 +5390,24 @@ static herr_t
 H5VL_provenance_request_specific(void *obj, H5VL_request_specific_t specific_type,
     va_list arguments)
 {
+    unsigned long start = get_time_usec();
+    unsigned long m1, m2;
 
+    H5VL_provenance_t *o = (H5VL_provenance_t *)obj;
     herr_t ret_value = -1;
 
 #ifdef ENABLE_PROVNC_LOGGING
     printf("------- PROVENANCE VOL REQUEST Specific\n");
 #endif
 
-    if(H5VL_REQUEST_WAITANY == specific_type ||
-            H5VL_REQUEST_WAITSOME == specific_type ||
-            H5VL_REQUEST_WAITALL == specific_type) {
-        va_list tmp_arguments;
-        size_t req_count;
+    m1 = get_time_usec();
+    ret_value = H5VLrequest_specific(o->under_object, o->under_vol_id, specific_type, arguments);
+    m2 = get_time_usec();
 
-        /* Sanity check */
-        assert(obj == NULL);
+    if(o)
+        prov_write(o->prov_helper, __func__, get_time_usec() - start);
 
-        /* Get enough info to call the underlying connector */
-        va_copy(tmp_arguments, arguments);
-        req_count = va_arg(tmp_arguments, size_t);
-
-        /* Can only use a request to invoke the underlying VOL connector when there's >0 requests */
-        if(req_count > 0) {
-            void **req_array;
-            void **under_req_array;
-            uint64_t timeout;
-            H5VL_provenance_t *o;
-            size_t u;               /* Local index variable */
-
-            /* Get the request array */
-            req_array = va_arg(tmp_arguments, void **);
-
-            /* Get a request to use for determining the underlying VOL connector */
-            o = (H5VL_provenance_t *)req_array[0];
-
-            /* Create array of underlying VOL requests */
-            under_req_array = (void **)malloc(req_count * sizeof(void **));
-            for(u = 0; u < req_count; u++)
-                under_req_array[u] = ((H5VL_provenance_t *)req_array[u])->under_object;
-
-            /* Remove the timeout value from the vararg list (it's used in all the calls below) */
-            timeout = va_arg(tmp_arguments, uint64_t);
-
-            /* Release requests that have completed */
-            if(H5VL_REQUEST_WAITANY == specific_type) {
-                size_t *index;          /* Pointer to the index of completed request */
-                H5ES_status_t *status;  /* Pointer to the request's status */
-
-                /* Retrieve the remaining arguments */
-                index = va_arg(tmp_arguments, size_t *);
-                assert(*index <= req_count);
-                status = va_arg(tmp_arguments, H5ES_status_t *);
-
-                /* Reissue the WAITANY 'request specific' call */
-                ret_value = H5VL_provenance_request_specific_reissue(o->under_object, o->under_vol_id, specific_type, req_count, under_req_array, timeout, index, status);
-
-                /* Release the completed request, if it completed */
-                if(ret_value >= 0 && *status != H5ES_STATUS_IN_PROGRESS) {
-                    H5VL_provenance_t *tmp_o;
-
-                    tmp_o = (H5VL_provenance_t *)req_array[*index];
-                    H5VL_provenance_free_obj(tmp_o);
-                } /* end if */
-            } /* end if */
-            else if(H5VL_REQUEST_WAITSOME == specific_type) {
-                size_t *outcount;               /* # of completed requests */
-                unsigned *array_of_indices;     /* Array of indices for completed requests */
-                H5ES_status_t *array_of_statuses; /* Array of statuses for completed requests */
-
-                /* Retrieve the remaining arguments */
-                outcount = va_arg(tmp_arguments, size_t *);
-                assert(*outcount <= req_count);
-                array_of_indices = va_arg(tmp_arguments, unsigned *);
-                array_of_statuses = va_arg(tmp_arguments, H5ES_status_t *);
-
-                /* Reissue the WAITSOME 'request specific' call */
-                ret_value = H5VL_provenance_request_specific_reissue(o->under_object, o->under_vol_id, specific_type, req_count, under_req_array, timeout, outcount, array_of_indices, array_of_statuses);
-
-                /* If any requests completed, release them */
-                if(ret_value >= 0 && *outcount > 0) {
-                    unsigned *idx_array;    /* Array of indices of completed requests */
-
-                    /* Retrieve the array of completed request indices */
-                    idx_array = va_arg(tmp_arguments, unsigned *);
-
-                    /* Release the completed requests */
-                    for(u = 0; u < *outcount; u++) {
-                        H5VL_provenance_t *tmp_o;
-
-                        tmp_o = (H5VL_provenance_t *)req_array[idx_array[u]];
-                        H5VL_provenance_free_obj(tmp_o);
-                    } /* end for */
-                } /* end if */
-            } /* end else-if */
-            else {      /* H5VL_REQUEST_WAITALL == specific_type */
-                H5ES_status_t *array_of_statuses; /* Array of statuses for completed requests */
-
-                /* Retrieve the remaining arguments */
-                array_of_statuses = va_arg(tmp_arguments, H5ES_status_t *);
-
-                /* Reissue the WAITALL 'request specific' call */
-                ret_value = H5VL_provenance_request_specific_reissue(o->under_object, o->under_vol_id, specific_type, req_count, under_req_array, timeout, array_of_statuses);
-
-                /* Release the completed requests */
-                if(ret_value >= 0) {
-                    for(u = 0; u < req_count; u++) {
-                        if(array_of_statuses[u] != H5ES_STATUS_IN_PROGRESS) {
-                            H5VL_provenance_t *tmp_o;
-
-                            tmp_o = (H5VL_provenance_t *)req_array[u];
-                            H5VL_provenance_free_obj(tmp_o);
-                        } /* end if */
-                    } /* end for */
-                } /* end if */
-            } /* end else */
-
-            /* Release array of requests for underlying connector */
-            free(under_req_array);
-        } /* end if */
-
-        /* Finish use of copied vararg list */
-        va_end(tmp_arguments);
-    } /* end if */
-    else
-        assert(0 && "Unknown 'specific' operation");
-
+    TOTAL_PROV_OVERHEAD += (get_time_usec() - start - (m2 - m1));
     return ret_value;
 } /* end H5VL_provenance_request_specific() */
 

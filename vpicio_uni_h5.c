@@ -217,7 +217,7 @@ void create_and_write_synthetic_h5_data(int rank, hid_t loc, hid_t *dset_ids, hi
 
 void print_usage(char *name)
 {
-    printf("Usage: %s /path/to/file #timestep sleep_sec [# mega particles]\n", name);
+    printf("Usage: %s /path/to/file #timestep sleep_sec enable_prov_logging /path/to/prov_log_file\n", name);
 }
 
 hid_t fileaccess_mod(const char* log_file_path){

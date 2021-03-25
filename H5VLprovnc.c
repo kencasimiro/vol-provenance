@@ -322,12 +322,12 @@ static herr_t H5VL_provenance_object_specific(void *obj, const H5VL_loc_params_t
 static herr_t H5VL_provenance_object_optional(void *obj, H5VL_attr_optional_t opt_type, hid_t dxpl_id, void **req, va_list arguments);
 
 /* Container/connector introspection callbacks */
-static herr_t H5VL_provenance_introspect_opt_query(void *obj, H5VL_subclass_t cls, int opt_type, hbool_t *supported);
+static herr_t H5VL_provenance_introspect_opt_query(void *obj, H5VL_subclass_t cls, int opt_type, uint64_t *flags);
 
 /* Async request callbacks */
-static herr_t H5VL_provenance_request_wait(void *req, uint64_t timeout, H5ES_status_t *status);
+static herr_t H5VL_provenance_request_wait(void *req, uint64_t timeout, H5VL_request_status_t *status);
 static herr_t H5VL_provenance_request_notify(void *obj, H5VL_request_notify_t cb, void *ctx);
-static herr_t H5VL_provenance_request_cancel(void *req);
+static herr_t H5VL_provenance_request_cancel(void *req, H5VL_request_status_t *status);
 static herr_t H5VL_provenance_request_specific(void *req, H5VL_request_specific_t specific_type, va_list arguments);
 static herr_t H5VL_provenance_request_optional(void *req, H5VL_attr_optional_t opt_type, va_list arguments);
 static herr_t H5VL_provenance_request_free(void *req);
@@ -349,9 +349,10 @@ static herr_t H5VL_provenance_token_from_str(void *obj, H5I_type_t obj_type, con
 
 /* PROVENANCE VOL connector class struct */
 static const H5VL_class_t H5VL_provenance_cls = {
-    H5VL_PROVNC_VERSION,                            /* version      */
+    H5VL_VERSION,                            /* VOL class struct version */
     (H5VL_class_value_t)H5VL_PROVNC_VALUE,          /* value        */
     H5VL_PROVNC_NAME,                               /* name         */
+    H5VL_PROVNC_VERSION,                            /* version      */
     0,                                              /* capability flags */
     H5VL_provenance_init,                           /* initialize   */
     H5VL_provenance_term,                           /* terminate    */
@@ -721,7 +722,6 @@ void prov_dump_open_things(FILE *f)
     if(PROV_HELPER) {
         file_prov_info_t *opened_file;
         unsigned file_count = 0;
-        char **token_str;
 
         fprintf(f, "# of open files: %d\n", PROV_HELPER->opened_files_cnt);
 
@@ -1987,8 +1987,9 @@ H5VL_provenance_init(hid_t vipl_id)
     GRP_LL_TOTAL_TIME = 0;
     DT_LL_TOTAL_TIME = 0;
     ATTR_LL_TOTAL_TIME = 0;
+
     /* Shut compiler up about unused parameter */
-    vipl_id = vipl_id;
+    (void)vipl_id;
 
     return 0;
 } /* end H5VL_provenance_init() */
@@ -5205,7 +5206,7 @@ H5VL_provenance_object_optional(void *obj, H5VL_attr_optional_t opt_type,
  */
 herr_t
 H5VL_provenance_introspect_opt_query(void *obj, H5VL_subclass_t cls,
-                                     int opt_type, hbool_t *supported)
+                                     int opt_type, uint64_t *flags)
 {
     H5VL_provenance_t *o = (H5VL_provenance_t *)obj;
     herr_t ret_value;
@@ -5213,9 +5214,9 @@ H5VL_provenance_introspect_opt_query(void *obj, H5VL_subclass_t cls,
 #ifdef ENABLE_PROVNC_LOGGING
     printf("------- PROVENANCE VOL INTROSPECT OptQuery\n");
 #endif
-	
+
     ret_value = H5VLintrospect_opt_query(o->under_object, o->under_vol_id,
-                                         cls, opt_type, supported);
+                                         cls, opt_type, flags);
 
     return ret_value;
 } /* end H5VL_provenance_introspect_opt_query() */
@@ -5236,7 +5237,7 @@ H5VL_provenance_introspect_opt_query(void *obj, H5VL_subclass_t cls,
  */
 static herr_t 
 H5VL_provenance_request_wait(void *obj, uint64_t timeout,
-    H5ES_status_t *status)
+    H5VL_request_status_t *status)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -5317,7 +5318,7 @@ H5VL_provenance_request_notify(void *obj, H5VL_request_notify_t cb, void *ctx)
  *-------------------------------------------------------------------------
  */
 static herr_t 
-H5VL_provenance_request_cancel(void *obj)
+H5VL_provenance_request_cancel(void *obj, H5VL_request_status_t *status)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -5330,7 +5331,7 @@ H5VL_provenance_request_cancel(void *obj)
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLrequest_cancel(o->under_object, o->under_vol_id);
+    ret_value = H5VLrequest_cancel(o->under_object, o->under_vol_id, status);
     m2 = get_time_usec();
 
     if(o)

@@ -40,44 +40,11 @@ typedef enum ProvLevel {
 typedef struct H5VL_provenance_info_t {
     hid_t under_vol_id;         /* VOL ID for under VOL */
     void *under_vol_info;       /* VOL info for under VOL */
-    char* prov_file_path;   // TODO: Move into prov_helper_t
-    Prov_level prov_level;  // TODO: Move into prov_helper_t
-    char* prov_line_format; // TODO: Move into prov_helper_t
-//    int ds_created;         // TODO: Move into dataset_prov_info
-//    int ds_accessed;        // TODO: Move into dataset_prov_info
-} H5VL_provenance_info_t;
-
-
-typedef enum ProvenanceOutputDST{
-    TEXT,
-    BINARY,
-    CSV
-}prov_out_dst;
-
-typedef struct ProvenanceFormat{
-    prov_out_dst dst_format;
-
-} prov_format;
-
-typedef struct H5VL_prov_file_info_t file_prov_info_t;
-
-typedef struct ProvenanceHelper {
-    /* Provenance properties */
     char* prov_file_path;
-    FILE* prov_file_handle;
     Prov_level prov_level;
     char* prov_line_format;
-    char user_name[32];
-    int pid;
-    pthread_t tid;
-    char proc_name[64];
-    int ptr_cnt;
-    int opened_files_cnt;
-    file_prov_info_t* opened_files;//linkedlist,
-} prov_helper_t;
+} H5VL_provenance_info_t;
 
-prov_helper_t* prov_helper_init( char* file_path, Prov_level prov_level, char* prov_line_format);
-int prov_write(prov_helper_t* helper_in, const char* msg, unsigned long duration);
 
 #ifdef __cplusplus
 extern "C" {

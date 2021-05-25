@@ -71,6 +71,21 @@ typedef struct H5VL_prov_datatype_info_t datatype_prov_info_t;
 typedef struct H5VL_prov_attribute_info_t attribute_prov_info_t;
 typedef struct H5VL_prov_file_info_t file_prov_info_t;
 
+typedef struct ProvenanceHelper {
+    /* Provenance properties */
+    char* prov_file_path;
+    FILE* prov_file_handle;
+    Prov_level prov_level;
+    char* prov_line_format;
+    char user_name[32];
+    int pid;
+    pthread_t tid;
+    char proc_name[64];
+    int ptr_cnt;
+    int opened_files_cnt;
+    file_prov_info_t* opened_files;//linkedlist,
+} prov_helper_t;
+
 typedef struct H5VL_provenance_t {
     hid_t  under_vol_id;        /* ID for underlying VOL connector */
     void  *under_object;        /* Info object for underlying VOL connector */
@@ -230,11 +245,6 @@ static prov_helper_t* PROV_HELPER = NULL;
 /********************* */
 
 /* Helper routines  */
-static herr_t H5VL_provenance_file_specific_reissue(void *obj, hid_t connector_id,
-    H5VL_file_specific_t specific_type, hid_t dxpl_id, void **req, ...);  //TOTAL_PROV_OVERHEAD is not recorded.
-static herr_t H5VL_provenance_link_create_reissue(H5VL_link_create_type_t create_type,
-    void *obj, const H5VL_loc_params_t *loc_params, hid_t connector_id,
-    hid_t lcpl_id, hid_t lapl_id, hid_t dxpl_id, void **req, ...);
 static H5VL_provenance_t *H5VL_provenance_new_obj(void *under_obj,
     hid_t under_vol_id, prov_helper_t* helper);
 static herr_t H5VL_provenance_free_obj(H5VL_provenance_t *obj);
@@ -260,9 +270,9 @@ static void *H5VL_provenance_attr_create(void *obj, const H5VL_loc_params_t *loc
 static void *H5VL_provenance_attr_open(void *obj, const H5VL_loc_params_t *loc_params, const char *name, hid_t aapl_id, hid_t dxpl_id, void **req);
 static herr_t H5VL_provenance_attr_read(void *attr, hid_t mem_type_id, void *buf, hid_t dxpl_id, void **req);
 static herr_t H5VL_provenance_attr_write(void *attr, hid_t mem_type_id, const void *buf, hid_t dxpl_id, void **req);
-static herr_t H5VL_provenance_attr_get(void *obj, H5VL_attr_get_t get_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_attr_specific(void *obj, const H5VL_loc_params_t *loc_params, H5VL_attr_specific_t specific_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_attr_optional(void *obj, H5VL_dataset_optional_t opt_type, hid_t dxpl_id, void **req, va_list arguments);
+static herr_t H5VL_provenance_attr_get(void *obj, H5VL_attr_get_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_attr_specific(void *obj, const H5VL_loc_params_t *loc_params, H5VL_attr_specific_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_attr_optional(void *obj, H5VL_optional_args_t *args, hid_t dxpl_id, void **req);
 static herr_t H5VL_provenance_attr_close(void *attr, hid_t dxpl_id, void **req);
 
 /* Dataset callbacks */
@@ -273,52 +283,52 @@ static void *H5VL_provenance_dataset_open(void *obj, const H5VL_loc_params_t *lo
 static herr_t H5VL_provenance_dataset_read(void *dset, hid_t mem_type_id, hid_t mem_space_id,
                                     hid_t file_space_id, hid_t plist_id, void *buf, void **req);
 static herr_t H5VL_provenance_dataset_write(void *dset, hid_t mem_type_id, hid_t mem_space_id, hid_t file_space_id, hid_t plist_id, const void *buf, void **req);
-static herr_t H5VL_provenance_dataset_get(void *dset, H5VL_dataset_get_t get_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_dataset_specific(void *obj, H5VL_dataset_specific_t specific_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_dataset_optional(void *obj, H5VL_attr_optional_t opt_type, hid_t dxpl_id, void **req, va_list arguments);
+static herr_t H5VL_provenance_dataset_get(void *dset, H5VL_dataset_get_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_dataset_specific(void *obj, H5VL_dataset_specific_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_dataset_optional(void *obj, H5VL_optional_args_t *args, hid_t dxpl_id, void **req);
 static herr_t H5VL_provenance_dataset_close(void *dset, hid_t dxpl_id, void **req);
 
 /* Datatype callbacks */
 static void *H5VL_provenance_datatype_commit(void *obj, const H5VL_loc_params_t *loc_params, const char *name, hid_t type_id, hid_t lcpl_id, hid_t tcpl_id, hid_t tapl_id, hid_t dxpl_id, void **req);
 static void *H5VL_provenance_datatype_open(void *obj, const H5VL_loc_params_t *loc_params, const char *name, hid_t tapl_id, hid_t dxpl_id, void **req);
-static herr_t H5VL_provenance_datatype_get(void *dt, H5VL_datatype_get_t get_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_datatype_specific(void *obj, H5VL_datatype_specific_t specific_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_datatype_optional(void *obj, H5VL_attr_optional_t opt_type, hid_t dxpl_id, void **req, va_list arguments);
+static herr_t H5VL_provenance_datatype_get(void *dt, H5VL_datatype_get_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_datatype_specific(void *obj, H5VL_datatype_specific_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_datatype_optional(void *obj, H5VL_optional_args_t *args, hid_t dxpl_id, void **req);
 static herr_t H5VL_provenance_datatype_close(void *dt, hid_t dxpl_id, void **req);
 
 /* File callbacks */
 static void *H5VL_provenance_file_create(const char *name, unsigned flags, hid_t fcpl_id, hid_t fapl_id, hid_t dxpl_id, void **req);
 static void *H5VL_provenance_file_open(const char *name, unsigned flags, hid_t fapl_id, hid_t dxpl_id, void **req);
-static herr_t H5VL_provenance_file_get(void *file, H5VL_file_get_t get_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_file_specific(void *file, H5VL_file_specific_t specific_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_file_optional(void *file, H5VL_attr_optional_t opt_type, hid_t dxpl_id, void **req, va_list arguments);
+static herr_t H5VL_provenance_file_get(void *file, H5VL_file_get_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_file_specific(void *file, H5VL_file_specific_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_file_optional(void *file, H5VL_optional_args_t *args, hid_t dxpl_id, void **req);
 static herr_t H5VL_provenance_file_close(void *file, hid_t dxpl_id, void **req);
 
 /* Group callbacks */
 static void *H5VL_provenance_group_create(void *obj, const H5VL_loc_params_t *loc_params,
     const char *name, hid_t lcpl_id, hid_t gcpl_id, hid_t gapl_id, hid_t dxpl_id, void **req);
 static void *H5VL_provenance_group_open(void *obj, const H5VL_loc_params_t *loc_params, const char *name, hid_t gapl_id, hid_t dxpl_id, void **req);
-static herr_t H5VL_provenance_group_get(void *obj, H5VL_group_get_t get_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_group_specific(void *obj, H5VL_group_specific_t specific_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_group_optional(void *obj, H5VL_attr_optional_t opt_type, hid_t dxpl_id, void **req, va_list arguments);
+static herr_t H5VL_provenance_group_get(void *obj, H5VL_group_get_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_group_specific(void *obj, H5VL_group_specific_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_group_optional(void *obj, H5VL_optional_args_t *args, hid_t dxpl_id, void **req);
 static herr_t H5VL_provenance_group_close(void *grp, hid_t dxpl_id, void **req);
 
 /* Link callbacks */
-static herr_t H5VL_provenance_link_create(H5VL_link_create_type_t create_type,
+static herr_t H5VL_provenance_link_create(H5VL_link_create_args_t *args,
     void *obj, const H5VL_loc_params_t *loc_params, hid_t lcpl_id, hid_t lapl_id,
-    hid_t dxpl_id, void **req, va_list arguments);
+    hid_t dxpl_id, void **req);
 static herr_t H5VL_provenance_link_copy(void *src_obj, const H5VL_loc_params_t *loc_params1, void *dst_obj, const H5VL_loc_params_t *loc_params2, hid_t lcpl_id, hid_t lapl_id, hid_t dxpl_id, void **req);
 static herr_t H5VL_provenance_link_move(void *src_obj, const H5VL_loc_params_t *loc_params1, void *dst_obj, const H5VL_loc_params_t *loc_params2, hid_t lcpl_id, hid_t lapl_id, hid_t dxpl_id, void **req);
-static herr_t H5VL_provenance_link_get(void *obj, const H5VL_loc_params_t *loc_params, H5VL_link_get_t get_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_link_specific(void *obj, const H5VL_loc_params_t *loc_params, H5VL_link_specific_t specific_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_link_optional(void *obj, H5VL_attr_optional_t opt_type, hid_t dxpl_id, void **req, va_list arguments);
+static herr_t H5VL_provenance_link_get(void *obj, const H5VL_loc_params_t *loc_params, H5VL_link_get_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_link_specific(void *obj, const H5VL_loc_params_t *loc_params, H5VL_link_specific_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_link_optional(void *obj, const H5VL_loc_params_t *loc_params, H5VL_optional_args_t *args, hid_t dxpl_id, void **req);
 
 /* Object callbacks */
 static void *H5VL_provenance_object_open(void *obj, const H5VL_loc_params_t *loc_params, H5I_type_t *obj_to_open_type, hid_t dxpl_id, void **req);
 static herr_t H5VL_provenance_object_copy(void *src_obj, const H5VL_loc_params_t *src_loc_params, const char *src_name, void *dst_obj, const H5VL_loc_params_t *dst_loc_params, const char *dst_name, hid_t ocpypl_id, hid_t lcpl_id, hid_t dxpl_id, void **req);
-static herr_t H5VL_provenance_object_get(void *obj, const H5VL_loc_params_t *loc_params, H5VL_object_get_t get_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_object_specific(void *obj, const H5VL_loc_params_t *loc_params, H5VL_object_specific_t specific_type, hid_t dxpl_id, void **req, va_list arguments);
-static herr_t H5VL_provenance_object_optional(void *obj, H5VL_attr_optional_t opt_type, hid_t dxpl_id, void **req, va_list arguments);
+static herr_t H5VL_provenance_object_get(void *obj, const H5VL_loc_params_t *loc_params, H5VL_object_get_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_object_specific(void *obj, const H5VL_loc_params_t *loc_params, H5VL_object_specific_args_t *args, hid_t dxpl_id, void **req);
+static herr_t H5VL_provenance_object_optional(void *obj, const H5VL_loc_params_t *loc_params, H5VL_optional_args_t *args, hid_t dxpl_id, void **req);
 
 /* Container/connector introspection callbacks */
 static herr_t H5VL_provenance_introspect_get_cap_flags(const void *info, unsigned *cap_flags);
@@ -328,20 +338,23 @@ static herr_t H5VL_provenance_introspect_opt_query(void *obj, H5VL_subclass_t cl
 static herr_t H5VL_provenance_request_wait(void *req, uint64_t timeout, H5VL_request_status_t *status);
 static herr_t H5VL_provenance_request_notify(void *obj, H5VL_request_notify_t cb, void *ctx);
 static herr_t H5VL_provenance_request_cancel(void *req, H5VL_request_status_t *status);
-static herr_t H5VL_provenance_request_specific(void *req, H5VL_request_specific_t specific_type, va_list arguments);
-static herr_t H5VL_provenance_request_optional(void *req, H5VL_attr_optional_t opt_type, va_list arguments);
+static herr_t H5VL_provenance_request_specific(void *req, H5VL_request_specific_args_t *args);
+static herr_t H5VL_provenance_request_optional(void *req, H5VL_optional_args_t *args);
 static herr_t H5VL_provenance_request_free(void *req);
 
 /* Blob callbacks */
 static herr_t H5VL_provenance_blob_put(void *obj, const void *buf, size_t size, void *blob_id, void *ctx);
 static herr_t H5VL_provenance_blob_get(void *obj, const void *blob_id, void *buf, size_t size, void *ctx);
-static herr_t H5VL_provenance_blob_specific(void *obj, void *blob_id, H5VL_blob_specific_t specific_type, va_list arguments);
-static herr_t H5VL_provenance_blob_optional(void *obj, void *blob_id, H5VL_blob_optional_t opt_type, va_list arguments);
+static herr_t H5VL_provenance_blob_specific(void *obj, void *blob_id, H5VL_blob_specific_args_t *args);
+static herr_t H5VL_provenance_blob_optional(void *obj, void *blob_id, H5VL_optional_args_t *args);
 
 /* Token callbacks */
 static herr_t H5VL_provenance_token_cmp(void *obj, const H5O_token_t *token1, const H5O_token_t *token2, int *cmp_value);
 static herr_t H5VL_provenance_token_to_str(void *obj, H5I_type_t obj_type, const H5O_token_t *token, char **token_str);
 static herr_t H5VL_provenance_token_from_str(void *obj, H5I_type_t obj_type, const char *token_str, H5O_token_t *token);
+
+/* Catch-all optional callback */
+static herr_t H5VL_provenance_optional(void *obj, H5VL_optional_args_t *args, hid_t dxpl_id, void **req);
 
 /*******************/
 /* Local variables */
@@ -454,7 +467,7 @@ static const H5VL_class_t H5VL_provenance_cls = {
         H5VL_provenance_token_to_str,               /* to_str */
         H5VL_provenance_token_from_str              /* from_str */
     },
-    NULL                                        /* optional */
+    H5VL_provenance_optional                    /* optional */
 };
 
 H5PL_type_t H5PLget_plugin_type(void) {return H5PL_TYPE_VOL;}
@@ -463,15 +476,15 @@ const void *H5PLget_plugin_info(void) {return &H5VL_provenance_cls;}
 /* The connector identification number, initialized at runtime */
 static hid_t prov_connector_id_global = H5I_INVALID_HID;
 
+prov_helper_t* prov_helper_init( char* file_path, Prov_level prov_level, char* prov_line_format);
+int prov_write(prov_helper_t* helper_in, const char* msg, unsigned long duration);
+
 /* Local routine prototypes */
-void file_get_wrapper(void *file, hid_t driver_id, H5VL_file_get_t get_type,
-    hid_t dxpl_id, void **req, ...);
-void dataset_get_wrapper(void *dset, hid_t driver_id, H5VL_dataset_get_t get_type,
-    hid_t dxpl_id, void **req, ...);
-herr_t object_get_wrapper(void *obj, const H5VL_loc_params_t *loc_params,
-    hid_t vol_id, H5VL_object_get_t get_type, hid_t dxpl_id, void **req, ...);
-herr_t attr_get_wrapper(void *obj, hid_t vol_id, H5VL_attr_get_t get_type,
-    hid_t dxpl_id, void **req, ...);
+static hid_t dataset_get_type(void *under_dset, hid_t under_vol_id, hid_t dxpl_id);
+static hid_t dataset_get_space(void *under_dset, hid_t under_vol_id, hid_t dxpl_id);
+static hid_t dataset_get_dcpl(void *under_dset, hid_t under_vol_id, hid_t dxpl_id);
+static ssize_t attr_get_name(void *under_obj, hid_t under_vol_id, hid_t dxpl_id,
+    size_t buf_size, void *buf);
 datatype_prov_info_t *new_dtype_info(file_prov_info_t* root_file,
     const char *name, H5O_token_t token);
 dataset_prov_info_t *new_dataset_info(file_prov_info_t *root_file,
@@ -515,9 +528,9 @@ void get_time_str(char *str_out);
 dataset_prov_info_t* new_ds_prov_info(void* under_object, hid_t vol_id, H5O_token_t token,
         file_prov_info_t* file_info, const char* ds_name, hid_t dxpl_id, void **req);
 void _new_loc_pram(H5I_type_t type, H5VL_loc_params_t *lparam);
-herr_t get_native_info(void *obj, H5VL_loc_params_t *loc_params, hid_t connector_id,
-		       H5VL_object_get_t get_type, hid_t dxpl_id, void **req, ...);
-void get_native_file_no(unsigned long* file_num_out, const H5VL_provenance_t* file_obj);
+static int get_native_info(void *obj, H5I_type_t target_obj_type, hid_t connector_id,
+                       hid_t dxpl_id, H5O_info2_t *oinfo);
+static int get_native_file_no(const H5VL_provenance_t *file_obj, unsigned long *file_num_out);
 herr_t provenance_file_setup(const char* str_in, char* file_path_out, Prov_level* level_out, char* format_out);
 H5VL_provenance_t* _fake_obj_new(file_prov_info_t* root_file, hid_t under_vol_id);
 void _fake_obj_free(H5VL_provenance_t* obj);
@@ -782,9 +795,8 @@ prov_helper_t * prov_helper_init( char* file_path, Prov_level prov_level, char* 
 
     getlogin_r(new_helper->user_name, 32);
 
-    if(new_helper->prov_level == File_only || new_helper->prov_level == File_and_print){
+    if(new_helper->prov_level == File_only || new_helper->prov_level == File_and_print)
         new_helper->prov_file_handle = fopen(new_helper->prov_file_path, "a");
-    }
 
     _dic_init();
     return new_helper;
@@ -1402,7 +1414,7 @@ void _fake_obj_free(H5VL_provenance_t *obj)
  *
  */
 H5VL_provenance_t * _obj_wrap_under(void *under, H5VL_provenance_t *upper_o,
-                                    const char *target_obj_name, 
+                                    const char *target_obj_name,
                                     H5I_type_t target_obj_type,
                                     hid_t dxpl_id, void **req)
 {
@@ -1410,7 +1422,6 @@ H5VL_provenance_t * _obj_wrap_under(void *under, H5VL_provenance_t *upper_o,
     file_prov_info_t *file_info = NULL;
 
     if (under) {
-        H5VL_loc_params_t p;
         H5O_info2_t oinfo;
         H5O_token_t token;
         unsigned long file_no;
@@ -1457,15 +1468,13 @@ H5VL_provenance_t * _obj_wrap_under(void *under, H5VL_provenance_t *upper_o,
             assert(target_obj_type == H5I_DATASET || target_obj_type == H5I_GROUP ||
                     target_obj_type == H5I_DATATYPE || target_obj_type == H5I_ATTR);
 
-            _new_loc_pram(target_obj_type, &p);
-            get_native_info(under, &p, upper_o->under_vol_id, 
-                            H5VL_OBJECT_GET_INFO, dxpl_id,
-                            NULL, &oinfo, H5O_INFO_BASIC);
+            get_native_info(under, target_obj_type, upper_o->under_vol_id,
+                            dxpl_id, &oinfo);
             token = oinfo.token;
             file_no = oinfo.fileno;
         }
         else
-            get_native_file_no(&file_no, obj);
+            get_native_file_no(obj, &file_no);
 
         switch (target_obj_type) {
             case H5I_DATASET:
@@ -1564,15 +1573,15 @@ dataset_prov_info_t * new_ds_prov_info(void* under_object, hid_t vol_id, H5O_tok
 
     assert(under_object);
     assert(file_info);
-	
+
     ds_info = new_dataset_info(file_info, ds_name, token);
 
-    dataset_get_wrapper(under_object, vol_id, H5VL_DATASET_GET_TYPE, dxpl_id, req, &dt_id);
+    dt_id = dataset_get_type(under_object, vol_id, dxpl_id);
     ds_info->dt_class = H5Tget_class(dt_id);
     ds_info->dset_type_size = H5Tget_size(dt_id);
     H5Tclose(dt_id);
 
-    dataset_get_wrapper(under_object, vol_id, H5VL_DATASET_GET_SPACE, dxpl_id, req, &ds_id);
+    ds_id = dataset_get_space(under_object, vol_id, dxpl_id);
     ds_info->ds_class = H5Sget_simple_extent_type(ds_id);
     if (ds_info->ds_class == H5S_SIMPLE) {
         ds_info->dimension_cnt = (unsigned)H5Sget_simple_extent_ndims(ds_id);
@@ -1581,7 +1590,7 @@ dataset_prov_info_t * new_ds_prov_info(void* under_object, hid_t vol_id, H5O_tok
     }
     H5Sclose(ds_id);
 
-    dataset_get_wrapper(under_object, vol_id, H5VL_DATASET_GET_DCPL, dxpl_id, req, &dcpl_id);
+    dcpl_id = dataset_get_dcpl(under_object, vol_id, dxpl_id);
     ds_info->layout = H5Pget_layout(dcpl_id);
     H5Pclose(dcpl_id);
 
@@ -1597,26 +1606,38 @@ void _new_loc_pram(H5I_type_t type, H5VL_loc_params_t *lparam)
     return;
 }
 
-herr_t get_native_info(void *obj, H5VL_loc_params_t *loc_params, hid_t connector_id,
-                       H5VL_object_get_t get_type, hid_t dxpl_id, void **req, ...)
+static int get_native_info(void *obj, H5I_type_t target_obj_type, hid_t connector_id,
+                       hid_t dxpl_id, H5O_info2_t *oinfo)
 {
-    herr_t r = -1;
-    va_list args;
-    int got_info;
+    H5VL_object_get_args_t vol_cb_args; /* Arguments to VOL callback */
+    H5VL_loc_params_t loc_params;
 
-    va_start(args, req); //add an new arg after req
-    got_info = H5VLobject_get(obj, loc_params, connector_id, H5VL_OBJECT_GET_INFO, dxpl_id, NULL, args);
-    va_end(args);
+    /* Set up location parameter */
+    _new_loc_pram(target_obj_type, &loc_params);
 
-    if(got_info < 0)
+    /* Set up VOL callback arguments */
+    vol_cb_args.op_type              = H5VL_OBJECT_GET_INFO;
+    vol_cb_args.args.get_info.oinfo  = oinfo;
+    vol_cb_args.args.get_info.fields = H5O_INFO_BASIC;
+
+    if(H5VLobject_get(obj, &loc_params, connector_id, &vol_cb_args, dxpl_id, NULL) < 0)
         return -1;
 
-    return r;
+    return 0;
 }
 
-void get_native_file_no(unsigned long* fileno, const H5VL_provenance_t* file_obj)
+static int get_native_file_no(const H5VL_provenance_t *file_obj, unsigned long *fileno)
 {
-    file_get_wrapper(file_obj->under_object, file_obj->under_vol_id, H5VL_FILE_GET_FILENO, H5P_DEFAULT, NULL, fileno);
+    H5VL_file_get_args_t vol_cb_args; /* Arguments to VOL callback */
+
+    /* Set up VOL callback arguments */
+    vol_cb_args.op_type              = H5VL_FILE_GET_FILENO;
+    vol_cb_args.args.get_fileno.fileno = fileno;
+
+    if(H5VLfile_get(file_obj->under_object, file_obj->under_vol_id, &vol_cb_args, H5P_DEFAULT, NULL) < 0)
+        return -1;
+
+    return 0;
 }
 
 H5VL_provenance_t *_file_open_common(void *under, hid_t vol_id,
@@ -1627,56 +1648,72 @@ H5VL_provenance_t *_file_open_common(void *under, hid_t vol_id,
 
     file = H5VL_provenance_new_obj(under, vol_id, PROV_HELPER);
     file->my_type = H5I_FILE;
-    get_native_file_no(&file_no, file);
+    get_native_file_no(file, &file_no);
     file->generic_prov_info = add_file_node(PROV_HELPER, name, file_no);
 
     return file;
 }
 
-void file_get_wrapper(void *file, hid_t driver_id, H5VL_file_get_t get_type,
-        hid_t dxpl_id, void **req, ...)
+static hid_t dataset_get_type(void *under_dset, hid_t under_vol_id, hid_t dxpl_id)
 {
-    va_list args;
+    H5VL_dataset_get_args_t vol_cb_args; /* Arguments to VOL callback */
 
-    va_start(args, req);
-    H5VLfile_get(file, driver_id, get_type, dxpl_id, req, args);
-    va_end(args);
+    /* Set up VOL callback arguments */
+    vol_cb_args.op_type              = H5VL_DATASET_GET_TYPE;
+    vol_cb_args.args.get_type.type_id = H5I_INVALID_HID;
+
+    if(H5VLdataset_get(under_dset, under_vol_id, &vol_cb_args, dxpl_id, NULL) < 0)
+        return H5I_INVALID_HID;
+
+    return vol_cb_args.args.get_type.type_id;
 }
 
-void dataset_get_wrapper(void *dset, hid_t driver_id, H5VL_dataset_get_t get_type,
-        hid_t dxpl_id, void **req, ...)
+static hid_t dataset_get_space(void *under_dset, hid_t under_vol_id, hid_t dxpl_id)
 {
-    va_list args;
+    H5VL_dataset_get_args_t vol_cb_args; /* Arguments to VOL callback */
 
-    va_start(args, req);
-    H5VLdataset_get(dset, driver_id, get_type, dxpl_id, req, args);
-    va_end(args);
+    /* Set up VOL callback arguments */
+    vol_cb_args.op_type              = H5VL_DATASET_GET_SPACE;
+    vol_cb_args.args.get_space.space_id = H5I_INVALID_HID;
+
+    if(H5VLdataset_get(under_dset, under_vol_id, &vol_cb_args, dxpl_id, NULL) < 0)
+        return H5I_INVALID_HID;
+
+    return vol_cb_args.args.get_space.space_id;
 }
 
-herr_t object_get_wrapper(void *obj, const H5VL_loc_params_t *loc_params,
-    hid_t vol_id, H5VL_object_get_t get_type, hid_t dxpl_id, void **req, ...)
+static hid_t dataset_get_dcpl(void *under_dset, hid_t under_vol_id, hid_t dxpl_id)
 {
-    va_list args;
-    herr_t ret_value;
+    H5VL_dataset_get_args_t vol_cb_args; /* Arguments to VOL callback */
 
-    va_start(args, req);
-    ret_value = H5VLobject_get(obj, loc_params, vol_id, get_type, dxpl_id, req, args);
-    va_end(args);
+    /* Set up VOL callback arguments */
+    vol_cb_args.op_type              = H5VL_DATASET_GET_DCPL;
+    vol_cb_args.args.get_dcpl.dcpl_id = H5I_INVALID_HID;
 
-    return(ret_value);
+    if(H5VLdataset_get(under_dset, under_vol_id, &vol_cb_args, dxpl_id, NULL) < 0)
+        return H5I_INVALID_HID;
+
+    return vol_cb_args.args.get_dcpl.dcpl_id;
 }
 
-herr_t attr_get_wrapper(void *obj, hid_t vol_id, H5VL_attr_get_t get_type,
-    hid_t dxpl_id, void **req, ...)
+static ssize_t attr_get_name(void *under_obj, hid_t under_vol_id, hid_t dxpl_id,
+    size_t buf_size, void *buf)
 {
-    va_list args;
-    herr_t ret_value;
+    H5VL_attr_get_args_t vol_cb_args;        /* Arguments to VOL callback */
+    size_t attr_name_len = 0;  /* Length of attribute name */
 
-    va_start(args, req);
-    ret_value = H5VLattr_get(obj, vol_id, get_type, dxpl_id, req, args);
-    va_end(args);
+    /* Set up VOL callback arguments */
+    vol_cb_args.op_type                           = H5VL_ATTR_GET_NAME;
+    vol_cb_args.args.get_name.loc_params.type     = H5VL_OBJECT_BY_SELF;
+    vol_cb_args.args.get_name.loc_params.obj_type = H5I_ATTR;
+    vol_cb_args.args.get_name.buf_size            = buf_size;
+    vol_cb_args.args.get_name.buf                 = buf;
+    vol_cb_args.args.get_name.attr_name_len       = &attr_name_len;
 
-    return(ret_value);
+    if (H5VLattr_get(under_obj, under_vol_id, &vol_cb_args, dxpl_id, NULL) < 0)
+        return -1;
+
+    return (ssize_t)attr_name_len;
 }
 
 //shorten function id: use hash value
@@ -2054,17 +2091,15 @@ H5VL_provenance_info_copy(const void *_info)
 
     /* Increment reference count on underlying VOL ID, and copy the VOL info */
     new_info->under_vol_id = info->under_vol_id;
+    H5Iinc_ref(new_info->under_vol_id);
+    if(info->under_vol_info)
+        H5VLcopy_connector_info(new_info->under_vol_id, &(new_info->under_vol_info), info->under_vol_info);
 
     if(info->prov_file_path)
         new_info->prov_file_path = strdup(info->prov_file_path);
     if(info->prov_line_format)
         new_info->prov_line_format = strdup(info->prov_line_format);
-
     new_info->prov_level = info->prov_level;
-
-    H5Iinc_ref(new_info->under_vol_id);
-    if(info->under_vol_info)
-        H5VLcopy_connector_info(new_info->under_vol_id, &(new_info->under_vol_info), info->under_vol_info);
 
     TOTAL_PROV_OVERHEAD += (get_time_usec() - start);
     return new_info;
@@ -2100,7 +2135,7 @@ H5VL_provenance_info_cmp(int *cmp_value, const void *_info1, const void *_info2)
 
     /* Initialize comparison value */
     *cmp_value = 0;
-    
+
     /* Compare under VOL connector classes */
     H5VLcmp_connector_cls(cmp_value, info1->under_vol_id, info2->under_vol_id);
     if(*cmp_value != 0){
@@ -2172,6 +2207,8 @@ H5VL_provenance_info_free(void *_info)
     H5Eset_current_stack(err_id);
 
     /* Free PROVENANCE info object itself */
+    free(info->prov_file_path);
+    free(info->prov_line_format);
     free(info);
 
     TOTAL_PROV_OVERHEAD += (get_time_usec() - start);
@@ -2670,20 +2707,15 @@ H5VL_provenance_attr_open(void *obj, const H5VL_loc_params_t *loc_params,
         char *attr_name = NULL;
 
         if(NULL == name) {
-            herr_t ret_value;
             ssize_t size_ret = 0;
-            H5VL_loc_params_t attr_loc_param;
 
-            _new_loc_pram(H5I_ATTR, &attr_loc_param);
-            size_ret = 0;
-            ret_value = attr_get_wrapper(under, o->under_vol_id, H5VL_ATTR_GET_NAME, dxpl_id, req, &attr_loc_param, 0, NULL, &size_ret);
-            if(ret_value >= 0 && size_ret > 0) {
+            size_ret = attr_get_name(under, o->under_vol_id, dxpl_id, 0, NULL);
+            if(size_ret > 0) {
                 size_t buf_len = (size_t)(size_ret + 1);
 
                 attr_name = (char *)malloc(buf_len);
-                size_ret = 0;
-                ret_value = attr_get_wrapper(under, o->under_vol_id, H5VL_ATTR_GET_NAME, dxpl_id, req, &attr_loc_param, buf_len, attr_name, &size_ret);
-                if(ret_value >= 0)
+                size_ret = attr_get_name(under, o->under_vol_id, dxpl_id, buf_len, attr_name);
+                if(size_ret >= 0)
                     name = attr_name;
             }
         }
@@ -2714,7 +2746,7 @@ H5VL_provenance_attr_open(void *obj, const H5VL_loc_params_t *loc_params,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_attr_read(void *attr, hid_t mem_type_id, void *buf,
     hid_t dxpl_id, void **req)
 {
@@ -2754,7 +2786,7 @@ H5VL_provenance_attr_read(void *attr, hid_t mem_type_id, void *buf,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_attr_write(void *attr, hid_t mem_type_id, const void *buf,
     hid_t dxpl_id, void **req)
 {
@@ -2794,9 +2826,9 @@ H5VL_provenance_attr_write(void *attr, hid_t mem_type_id, const void *buf,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_attr_get(void *obj, H5VL_attr_get_t get_type, hid_t dxpl_id,
-    void **req, va_list arguments)
+static herr_t
+H5VL_provenance_attr_get(void *obj, H5VL_attr_get_args_t *args, hid_t dxpl_id,
+    void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -2809,7 +2841,7 @@ H5VL_provenance_attr_get(void *obj, H5VL_attr_get_t get_type, hid_t dxpl_id,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLattr_get(o->under_object, o->under_vol_id, get_type, dxpl_id, req, arguments);
+    ret_value = H5VLattr_get(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -2834,9 +2866,9 @@ H5VL_provenance_attr_get(void *obj, H5VL_attr_get_t get_type, hid_t dxpl_id,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_attr_specific(void *obj, const H5VL_loc_params_t *loc_params,
-    H5VL_attr_specific_t specific_type, hid_t dxpl_id, void **req, va_list arguments)
+    H5VL_attr_specific_args_t *args, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -2849,7 +2881,7 @@ H5VL_provenance_attr_specific(void *obj, const H5VL_loc_params_t *loc_params,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLattr_specific(o->under_object, loc_params, o->under_vol_id, specific_type, dxpl_id, req, arguments);
+    ret_value = H5VLattr_specific(o->under_object, loc_params, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -2874,9 +2906,8 @@ H5VL_provenance_attr_specific(void *obj, const H5VL_loc_params_t *loc_params,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_attr_optional(void *obj, H5VL_dataset_optional_t opt_type, hid_t dxpl_id, void **req,
-    va_list arguments)
+static herr_t
+H5VL_provenance_attr_optional(void *obj, H5VL_optional_args_t *args, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -2889,7 +2920,7 @@ H5VL_provenance_attr_optional(void *obj, H5VL_dataset_optional_t opt_type, hid_t
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLattr_optional(o->under_object, opt_type, o->under_vol_id, dxpl_id, req, arguments);
+    ret_value = H5VLattr_optional(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -2914,7 +2945,7 @@ H5VL_provenance_attr_optional(void *obj, H5VL_dataset_optional_t opt_type, hid_t
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_attr_close(void *attr, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
@@ -3051,7 +3082,7 @@ H5VL_provenance_dataset_open(void *obj, const H5VL_loc_params_t *loc_params,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_dataset_read(void *dset, hid_t mem_type_id, hid_t mem_space_id,
     hid_t file_space_id, hid_t plist_id, void *buf, void **req)
 {
@@ -3130,7 +3161,7 @@ H5VL_provenance_dataset_read(void *dset, hid_t mem_type_id, hid_t mem_space_id,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_dataset_write(void *dset, hid_t mem_type_id, hid_t mem_space_id,
     hid_t file_space_id, hid_t plist_id, const void *buf, void **req)
 {
@@ -3214,9 +3245,9 @@ H5VL_provenance_dataset_write(void *dset, hid_t mem_type_id, hid_t mem_space_id,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_dataset_get(void *dset, H5VL_dataset_get_t get_type,
-    hid_t dxpl_id, void **req, va_list arguments)
+static herr_t
+H5VL_provenance_dataset_get(void *dset, H5VL_dataset_get_args_t *args,
+    hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -3229,7 +3260,7 @@ H5VL_provenance_dataset_get(void *dset, H5VL_dataset_get_t get_type,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLdataset_get(o->under_object, o->under_vol_id, get_type, dxpl_id, req, arguments);
+    ret_value = H5VLdataset_get(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -3254,9 +3285,9 @@ H5VL_provenance_dataset_get(void *dset, H5VL_dataset_get_t get_type,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_dataset_specific(void *obj, H5VL_dataset_specific_t specific_type,
-    hid_t dxpl_id, void **req, va_list arguments)
+static herr_t
+H5VL_provenance_dataset_specific(void *obj, H5VL_dataset_specific_args_t *args,
+    hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -3265,7 +3296,6 @@ H5VL_provenance_dataset_specific(void *obj, H5VL_dataset_specific_t specific_typ
     void *under_obj = NULL;
     hid_t under_vol_id = -1;
     prov_helper_t *helper = NULL;
-    va_list my_arguments;
     dataset_prov_info_t *my_dataset_info;
     herr_t ret_value;
 
@@ -3277,16 +3307,7 @@ H5VL_provenance_dataset_specific(void *obj, H5VL_dataset_specific_t specific_typ
     assert(o->my_type == H5I_DATASET);
 
     // Check if refreshing
-    if(specific_type == H5VL_DATASET_SET_EXTENT) {
-        // Make a copy of the argument list for later use, after the underlying
-        // operation completes
-        va_copy(my_arguments, arguments);
-    }
-    else if(specific_type == H5VL_DATASET_REFRESH) {
-        // Make a copy of the argument list for later use, after the underlying
-        // operation completes
-        va_copy(my_arguments, arguments);
-
+    if(args->op_type == H5VL_DATASET_REFRESH) {
         // Save dataset prov info for later, and increment the refcount on it,
         // so that the stats aren't lost when the object is closed and reopened
         // during the underlying refresh operation
@@ -3301,10 +3322,11 @@ H5VL_provenance_dataset_specific(void *obj, H5VL_dataset_specific_t specific_typ
     helper = o->prov_helper;
 
     m1 = get_time_usec();
-    ret_value = H5VLdataset_specific(o->under_object, o->under_vol_id, specific_type, dxpl_id, req, arguments);
+    ret_value = H5VLdataset_specific(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
-    if(specific_type == H5VL_DATASET_SET_EXTENT) {
+    // Update dataset dimensions for 'set extent' operations
+    if(args->op_type == H5VL_DATASET_SET_EXTENT) {
         if(ret_value >= 0) {
             dataset_prov_info_t *ds_info;
 
@@ -3313,7 +3335,7 @@ H5VL_provenance_dataset_specific(void *obj, H5VL_dataset_specific_t specific_typ
 
             // Update dimension sizes, if simple dataspace
             if(H5S_SIMPLE == ds_info->ds_class) {
-                const hsize_t *new_size = va_arg(my_arguments, const hsize_t *); 
+                const hsize_t *new_size = args->args.set_extent.size;
                 unsigned u;
 
                 // Update the dataset's dimensions & element count
@@ -3324,15 +3346,12 @@ H5VL_provenance_dataset_specific(void *obj, H5VL_dataset_specific_t specific_typ
                 }
             }
         }
-
-        // Finish use of copied vararg list
-        va_end(my_arguments);
     }
-    else if(specific_type == H5VL_DATASET_REFRESH) {
+    // Get new dataset info, after refresh
+    else if(args->op_type == H5VL_DATASET_REFRESH) {
         // Sanity check
         assert(my_dataset_info);
 
-        // Get new dataset info, after refresh
         if(ret_value >= 0) {
             hid_t dataset_id;
             hid_t space_id;
@@ -3345,7 +3364,7 @@ H5VL_provenance_dataset_specific(void *obj, H5VL_dataset_specific_t specific_typ
             obj = NULL;
 
             // Get dataset ID from arg list
-            dataset_id = va_arg(my_arguments, hid_t);
+            dataset_id = args->args.refresh.dset_id;
 
             // Update dataspace dimensions & element count (which could have changed)
             space_id = H5Dget_space(dataset_id);
@@ -3355,9 +3374,6 @@ H5VL_provenance_dataset_specific(void *obj, H5VL_dataset_specific_t specific_typ
 
             // Don't close dataset ID, it's owned by the application
         }
-
-        // Finish use of copied vararg list
-        va_end(my_arguments);
 
         // Decrement refcount on dataset info
         rm_dataset_node(helper, under_obj, under_vol_id, my_dataset_info);
@@ -3384,9 +3400,9 @@ H5VL_provenance_dataset_specific(void *obj, H5VL_dataset_specific_t specific_typ
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_dataset_optional(void *obj, H5VL_attr_optional_t opt_type,
-                                 hid_t dxpl_id, void **req, va_list arguments)
+static herr_t
+H5VL_provenance_dataset_optional(void *obj, H5VL_optional_args_t *args,
+                                 hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -3399,8 +3415,7 @@ H5VL_provenance_dataset_optional(void *obj, H5VL_attr_optional_t opt_type,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLdataset_optional(o->under_object, opt_type, 
-                                     o->under_vol_id, dxpl_id, req, arguments);
+    ret_value = H5VLdataset_optional(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -3425,7 +3440,7 @@ H5VL_provenance_dataset_optional(void *obj, H5VL_attr_optional_t opt_type,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_dataset_close(void *dset, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
@@ -3561,9 +3576,9 @@ H5VL_provenance_datatype_open(void *obj, const H5VL_loc_params_t *loc_params,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_datatype_get(void *dt, H5VL_datatype_get_t get_type,
-    hid_t dxpl_id, void **req, va_list arguments)
+static herr_t
+H5VL_provenance_datatype_get(void *dt, H5VL_datatype_get_args_t *args,
+    hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -3576,7 +3591,7 @@ H5VL_provenance_datatype_get(void *dt, H5VL_datatype_get_t get_type,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLdatatype_get(o->under_object, o->under_vol_id, get_type, dxpl_id, req, arguments);
+    ret_value = H5VLdatatype_get(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -3601,9 +3616,9 @@ H5VL_provenance_datatype_get(void *dt, H5VL_datatype_get_t get_type,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_datatype_specific(void *obj, H5VL_datatype_specific_t specific_type,
-    hid_t dxpl_id, void **req, va_list arguments)
+static herr_t
+H5VL_provenance_datatype_specific(void *obj, H5VL_datatype_specific_args_t *args,
+    hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -3612,7 +3627,6 @@ H5VL_provenance_datatype_specific(void *obj, H5VL_datatype_specific_t specific_t
     void *under_obj = NULL;
     hid_t under_vol_id = -1;
     prov_helper_t *helper = NULL;
-    va_list my_arguments;
     datatype_prov_info_t *my_dtype_info = NULL;
     herr_t ret_value;
 
@@ -3621,11 +3635,7 @@ H5VL_provenance_datatype_specific(void *obj, H5VL_datatype_specific_t specific_t
 #endif
 
     // Check if refreshing
-    if(specific_type == H5VL_DATATYPE_REFRESH) {
-        // Make a copy of the argument list for later use, after the underlying
-        // refresh operation completes
-        va_copy(my_arguments, arguments);
-
+    if(args->op_type == H5VL_DATATYPE_REFRESH) {
         // Save datatype prov info for later, and increment the refcount on it,
         // so that the stats aren't lost when the object is closed and reopened
         // during the underlying refresh operation
@@ -3640,10 +3650,10 @@ H5VL_provenance_datatype_specific(void *obj, H5VL_datatype_specific_t specific_t
     helper = o->prov_helper;
 
     m1 = get_time_usec();
-    ret_value = H5VLdatatype_specific(o->under_object, o->under_vol_id, specific_type, dxpl_id, req, arguments);
+    ret_value = H5VLdatatype_specific(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
-    if(specific_type == H5VL_DATATYPE_REFRESH) {
+    if(args->op_type == H5VL_DATATYPE_REFRESH) {
         // Sanity check
         assert(my_dtype_info);
 
@@ -3660,9 +3670,6 @@ H5VL_provenance_datatype_specific(void *obj, H5VL_datatype_specific_t specific_t
 
             // Don't close datatype ID, it's owned by the application
         }
-
-        // Finish use of copied vararg list
-        va_end(my_arguments);
 
         // Decrement refcount on datatype info
         rm_dtype_node(helper, o->under_object, under_vol_id, my_dtype_info);
@@ -3689,9 +3696,9 @@ H5VL_provenance_datatype_specific(void *obj, H5VL_datatype_specific_t specific_t
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_datatype_optional(void *obj, H5VL_attr_optional_t opt_type, 
-                                  hid_t dxpl_id, void **req, va_list arguments)
+static herr_t
+H5VL_provenance_datatype_optional(void *obj, H5VL_optional_args_t *args,
+                                  hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -3704,8 +3711,7 @@ H5VL_provenance_datatype_optional(void *obj, H5VL_attr_optional_t opt_type,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLdatatype_optional(o->under_object, opt_type, o->under_vol_id, 
-                                      dxpl_id, req, arguments);
+    ret_value = H5VLdatatype_optional(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -3730,7 +3736,7 @@ H5VL_provenance_datatype_optional(void *obj, H5VL_attr_optional_t opt_type,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_datatype_close(void *dt, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
@@ -4003,9 +4009,9 @@ H5VL_provenance_file_open(const char *name, unsigned flags, hid_t fapl_id,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_file_get(void *file, H5VL_file_get_t get_type, hid_t dxpl_id,
-    void **req, va_list arguments)
+static herr_t
+H5VL_provenance_file_get(void *file, H5VL_file_get_args_t *args, hid_t dxpl_id,
+    void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -4018,7 +4024,7 @@ H5VL_provenance_file_get(void *file, H5VL_file_get_t get_type, hid_t dxpl_id,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLfile_get(o->under_object, o->under_vol_id, get_type, dxpl_id, req, arguments);
+    ret_value = H5VLfile_get(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -4034,32 +4040,6 @@ H5VL_provenance_file_get(void *file, H5VL_file_get_t get_type, hid_t dxpl_id,
 
 
 /*-------------------------------------------------------------------------
- * Function:    H5VL_provenance_file_specific_reissue
- *
- * Purpose:     Re-wrap vararg arguments into a va_list and reissue the
- *              file specific callback to the underlying VOL connector.
- *
- * Return:      Success:    0
- *              Failure:    -1
- *
- *-------------------------------------------------------------------------
- */
-static herr_t 
-H5VL_provenance_file_specific_reissue(void *obj, hid_t connector_id,
-    H5VL_file_specific_t specific_type, hid_t dxpl_id, void **req, ...)
-{
-    va_list arguments;
-    herr_t ret_value;
-
-    va_start(arguments, req);
-    ret_value = H5VLfile_specific(obj, connector_id, specific_type, dxpl_id, req, arguments);
-    va_end(arguments);
-
-    return ret_value;
-} /* end H5VL_provenance_file_specific_reissue() */
-
-
-/*-------------------------------------------------------------------------
  * Function:    H5VL_provenance_file_specific
  *
  * Purpose:     Specific operation on file
@@ -4069,14 +4049,18 @@ H5VL_provenance_file_specific_reissue(void *obj, hid_t connector_id,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_file_specific(void *file, H5VL_file_specific_t specific_type,
-    hid_t dxpl_id, void **req, va_list arguments)
+static herr_t
+H5VL_provenance_file_specific(void *file, H5VL_file_specific_args_t *args,
+    hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
 
     H5VL_provenance_t *o = (H5VL_provenance_t *)file;
+    H5VL_provenance_t *new_o;
+    H5VL_file_specific_args_t my_args;
+    H5VL_file_specific_args_t *new_args;
+    H5VL_provenance_info_t *info;
     hid_t under_vol_id = -1;
     herr_t ret_value;
 
@@ -4084,97 +4068,110 @@ H5VL_provenance_file_specific(void *file, H5VL_file_specific_t specific_type,
     printf("------- PROVENANCE VOL FILE Specific\n");
 #endif
 
-    /* Unpack arguments to get at the child file pointer when mounting a file */
-    if(specific_type == H5VL_FILE_MOUNT) {
-        H5I_type_t loc_type;
-        const char *name;
-        H5VL_provenance_t *child_file;
-        hid_t plist_id;
+    /* Check for 'is accessible' operation */
+    if(args->op_type == H5VL_FILE_IS_ACCESSIBLE) {
+        /* Make a (shallow) copy of the arguments */
+        memcpy(&my_args, args, sizeof(my_args));
 
-        /* Retrieve parameters for 'mount' operation, so we can unwrap the child file */
-        loc_type = (H5I_type_t)va_arg(arguments, int); /* enum work-around */
-        name = va_arg(arguments, const char *);
-        child_file = (H5VL_provenance_t *)va_arg(arguments, void *);
-        plist_id = va_arg(arguments, hid_t);
-
-        /* Keep the correct underlying VOL ID for possible async request token */
-        under_vol_id = o->under_vol_id;
-
-        /* Re-issue 'file specific' call, using the unwrapped pieces */
-        m1 = get_time_usec();
-        ret_value = H5VL_provenance_file_specific_reissue(o->under_object, o->under_vol_id, specific_type, dxpl_id, req, (int)loc_type, name, child_file->under_object, plist_id);
-        m2 = get_time_usec();
-    } /* end if */
-    else if(specific_type == H5VL_FILE_IS_ACCESSIBLE) {
-        H5VL_provenance_info_t *info;
-        hid_t fapl_id, under_fapl_id;
-        const char *name;
-        htri_t *ret;
-
-        /* Get the arguments for the 'is accessible' check */
-        fapl_id = va_arg(arguments, hid_t);
-        name    = va_arg(arguments, const char *);
-        ret     = va_arg(arguments, htri_t *);
+        /* Set up the new FAPL for the updated arguments */
 
         /* Get copy of our VOL info from FAPL */
-        H5Pget_vol_info(fapl_id, (void **)&info);
+        H5Pget_vol_info(args->args.is_accessible.fapl_id, (void **)&info);
 
-        /* Copy the FAPL */
-        under_fapl_id = H5Pcopy(fapl_id);
+        /* Make sure we have info about the underlying VOL to be used */
+        if (!info)
+            return (-1);
 
-        /* Set the VOL ID and info for the underlying FAPL */
-        H5Pset_vol(under_fapl_id, info->under_vol_id, info->under_vol_info);
-
-        /* Keep the correct underlying VOL ID for possible async request token */
+        /* Keep the correct underlying VOL ID for later */
         under_vol_id = info->under_vol_id;
 
-        /* Re-issue 'file specific' call */
-        m1 = get_time_usec();
-        ret_value = H5VL_provenance_file_specific_reissue(NULL, info->under_vol_id, specific_type, dxpl_id, req, under_fapl_id, name, ret);
-        m2 = get_time_usec();
+        /* Copy the FAPL */
+        my_args.args.is_accessible.fapl_id = H5Pcopy(args->args.is_accessible.fapl_id);
 
-        /* Close underlying FAPL */
-        H5Pclose(under_fapl_id);
+        /* Set the VOL ID and info for the underlying FAPL */
+        H5Pset_vol(my_args.args.is_accessible.fapl_id, info->under_vol_id, info->under_vol_info);
 
-        /* Release copy of our VOL info */
-        H5VL_provenance_info_free(info);
+        /* Set argument pointer to new arguments */
+        new_args = &my_args;
+
+        /* Set object pointer for operation */
+        new_o = NULL;
+    } /* end else-if */
+    /* Check for 'delete' operation */
+    else if(args->op_type == H5VL_FILE_DELETE) {
+        /* Make a (shallow) copy of the arguments */
+        memcpy(&my_args, args, sizeof(my_args));
+
+        /* Set up the new FAPL for the updated arguments */
+
+        /* Get copy of our VOL info from FAPL */
+        H5Pget_vol_info(args->args.del.fapl_id, (void **)&info);
+
+        /* Make sure we have info about the underlying VOL to be used */
+        if (!info)
+            return (-1);
+
+        /* Keep the correct underlying VOL ID for later */
+        under_vol_id = info->under_vol_id;
+
+        /* Copy the FAPL */
+        my_args.args.del.fapl_id = H5Pcopy(args->args.del.fapl_id);
+
+        /* Set the VOL ID and info for the underlying FAPL */
+        H5Pset_vol(my_args.args.del.fapl_id, info->under_vol_id, info->under_vol_info);
+
+        /* Set argument pointer to new arguments */
+        new_args = &my_args;
+
+        /* Set object pointer for operation */
+        new_o = NULL;
     } /* end else-if */
     else {
-        va_list my_arguments;
-
-        /* Make a copy of the argument list for later, if reopening */
-        if(specific_type == H5VL_FILE_REOPEN)
-            va_copy(my_arguments, arguments);
-
-        /* Keep the correct underlying VOL ID for possible async request token */
+        /* Keep the correct underlying VOL ID for later */
         under_vol_id = o->under_vol_id;
-        m1 = get_time_usec();
-        ret_value = H5VLfile_specific(o->under_object, o->under_vol_id, specific_type, dxpl_id, req, arguments);
-        m2 = get_time_usec();
 
-        /* Wrap file struct pointer, if we reopened one */
-        if(specific_type == H5VL_FILE_REOPEN) {
-            if(ret_value >= 0) {
-                void      **ret = va_arg(my_arguments, void **);
+        /* Set argument pointer to current arguments */
+        new_args = args;
 
-                if(ret && *ret){
-                    char* file_name = ((file_prov_info_t*)(o->generic_prov_info))->file_name;
-
-                    *ret = _file_open_common(*ret, under_vol_id, file_name);
-
-                    // Shouldn't need to duplicate MPI Comm & Info
-                    // since the file_info should be the same
-                }
-            } /* end if */
-
-            /* Finish use of copied vararg list */
-            va_end(my_arguments);
-        } /* end if */
+        /* Set object pointer for operation */
+        new_o = o->under_object;
     } /* end else */
+
+    m1 = get_time_usec();
+    ret_value = H5VLfile_specific(new_o, under_vol_id, new_args, dxpl_id, req);
+    m2 = get_time_usec();
 
     /* Check for async request */
     if(req && *req)
         *req = H5VL_provenance_new_obj(*req, under_vol_id, o->prov_helper);
+
+    /* Check for 'is accessible' operation */
+    if(args->op_type == H5VL_FILE_IS_ACCESSIBLE) {
+        /* Close underlying FAPL */
+        H5Pclose(my_args.args.is_accessible.fapl_id);
+
+        /* Release copy of our VOL info */
+        H5VL_provenance_info_free(info);
+    } /* end else-if */
+    /* Check for 'delete' operation */
+    else if(args->op_type == H5VL_FILE_DELETE) {
+        /* Close underlying FAPL */
+        H5Pclose(my_args.args.del.fapl_id);
+
+        /* Release copy of our VOL info */
+        H5VL_provenance_info_free(info);
+    } /* end else-if */
+    else if(args->op_type == H5VL_FILE_REOPEN) {
+        /* Wrap reopened file struct pointer, if we reopened one */
+        if(ret_value >= 0 && args->args.reopen.file) {
+            char *file_name = ((file_prov_info_t*)(o->generic_prov_info))->file_name;
+
+            *args->args.reopen.file = _file_open_common(*args->args.reopen.file, under_vol_id, file_name);
+
+            // Shouldn't need to duplicate MPI Comm & Info
+            // since the file_info should be the same
+        } /* end if */
+    } /* end else */
 
     if(o)
         prov_write(o->prov_helper, __func__, get_time_usec() - start);
@@ -4194,9 +4191,9 @@ H5VL_provenance_file_specific(void *file, H5VL_file_specific_t specific_type,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_file_optional(void *file, H5VL_attr_optional_t opt_type, 
-                              hid_t dxpl_id, void **req, va_list arguments)
+static herr_t
+H5VL_provenance_file_optional(void *file, H5VL_optional_args_t *args,
+                              hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -4209,8 +4206,7 @@ H5VL_provenance_file_optional(void *file, H5VL_attr_optional_t opt_type,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLfile_optional(o->under_object, o->under_vol_id, opt_type,
-                                  dxpl_id, req, arguments);
+    ret_value = H5VLfile_optional(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -4235,7 +4231,7 @@ H5VL_provenance_file_optional(void *file, H5VL_attr_optional_t opt_type,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_file_close(void *file, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
@@ -4371,9 +4367,9 @@ H5VL_provenance_group_open(void *obj, const H5VL_loc_params_t *loc_params,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_group_get(void *obj, H5VL_group_get_t get_type, hid_t dxpl_id,
-    void **req, va_list arguments)
+static herr_t
+H5VL_provenance_group_get(void *obj, H5VL_group_get_args_t *args, hid_t dxpl_id,
+    void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -4386,7 +4382,7 @@ H5VL_provenance_group_get(void *obj, H5VL_group_get_t get_type, hid_t dxpl_id,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLgroup_get(o->under_object, o->under_vol_id, get_type, dxpl_id, req, arguments);
+    ret_value = H5VLgroup_get(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -4411,17 +4407,18 @@ H5VL_provenance_group_get(void *obj, H5VL_group_get_t get_type, hid_t dxpl_id,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_group_specific(void *obj, H5VL_group_specific_t specific_type,
-    hid_t dxpl_id, void **req, va_list arguments)
+static herr_t
+H5VL_provenance_group_specific(void *obj, H5VL_group_specific_args_t *args,
+    hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
 
     H5VL_provenance_t *o = (H5VL_provenance_t *)obj;
+    H5VL_group_specific_args_t my_args;
+    H5VL_group_specific_args_t *new_args;
     hid_t under_vol_id = -1;
     prov_helper_t *helper = NULL;
-    va_list my_arguments;
     group_prov_info_t *my_group_info;
     herr_t ret_value;
 
@@ -4429,12 +4426,23 @@ H5VL_provenance_group_specific(void *obj, H5VL_group_specific_t specific_type,
     printf("------- PROVENANCE VOL GROUP Specific\n");
 #endif
 
-    // Check if refreshing
-    if(specific_type == H5VL_GROUP_REFRESH) {
-        // Make a copy of the argument list for later use, after the underlying
-        // refresh operation completes
-        va_copy(my_arguments, arguments);
+    /* Unpack arguments to get at the child file pointer when mounting a file */
+    if(args->op_type == H5VL_GROUP_MOUNT) {
 
+        /* Make a (shallow) copy of the arguments */
+        memcpy(&my_args, args, sizeof(my_args));
+
+        /* Set the object for the child file */
+        my_args.args.mount.child_file = ((H5VL_provenance_t *)args->args.mount.child_file)->under_object;
+
+        /* Point to modified arguments */
+        new_args = &my_args;
+    } /* end if */
+    else
+        new_args = args;
+
+    // Check if refreshing
+    if(args->op_type == H5VL_GROUP_REFRESH) {
         // Save group prov info for later, and increment the refcount on it,
         // so that the stats aren't lost when the object is closed and reopened
         // during the underlying refresh operation
@@ -4448,10 +4456,10 @@ H5VL_provenance_group_specific(void *obj, H5VL_group_specific_t specific_type,
     helper = o->prov_helper;
 
     m1 = get_time_usec();
-    ret_value = H5VLgroup_specific(o->under_object, o->under_vol_id, specific_type, dxpl_id, req, arguments);
+    ret_value = H5VLgroup_specific(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
-    if(specific_type == H5VL_GROUP_REFRESH) {
+    if(args->op_type == H5VL_GROUP_REFRESH) {
         // Sanity check
         assert(my_group_info);
 
@@ -4468,9 +4476,6 @@ H5VL_provenance_group_specific(void *obj, H5VL_group_specific_t specific_type,
 
             // Don't close group ID, it's owned by the application
         }
-
-        // Finish use of copied vararg list
-        va_end(my_arguments);
 
         // Decrement refcount on group info
         rm_grp_node(helper, o->under_object, o->under_vol_id, my_group_info);
@@ -4497,9 +4502,9 @@ H5VL_provenance_group_specific(void *obj, H5VL_group_specific_t specific_type,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_group_optional(void *obj, H5VL_attr_optional_t opt_type, 
-                               hid_t dxpl_id, void **req, va_list arguments)
+static herr_t
+H5VL_provenance_group_optional(void *obj, H5VL_optional_args_t *args,
+                               hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -4512,8 +4517,7 @@ H5VL_provenance_group_optional(void *obj, H5VL_attr_optional_t opt_type,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLgroup_optional(o->under_object, opt_type, o->under_vol_id, 
-                                   dxpl_id, req, arguments);
+    ret_value = H5VLgroup_optional(o->under_object, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -4538,7 +4542,7 @@ H5VL_provenance_group_optional(void *obj, H5VL_attr_optional_t opt_type,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_group_close(void *grp, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
@@ -4579,33 +4583,6 @@ H5VL_provenance_group_close(void *grp, hid_t dxpl_id, void **req)
 
 
 /*-------------------------------------------------------------------------
- * Function:    H5VL_provenance_link_create_reissue
- *
- * Purpose:     Re-wrap vararg arguments into a va_list and reissue the
- *              link create callback to the underlying VOL connector.
- *
- * Return:      Success:    0
- *              Failure:    -1
- *
- *-------------------------------------------------------------------------
- */
-static herr_t 
-H5VL_provenance_link_create_reissue(H5VL_link_create_type_t create_type,
-    void *obj, const H5VL_loc_params_t *loc_params, hid_t connector_id,
-    hid_t lcpl_id, hid_t lapl_id, hid_t dxpl_id, void **req, ...)
-{
-    va_list arguments;
-    herr_t ret_value;
-
-    va_start(arguments, req);
-    ret_value = H5VLlink_create(create_type, obj, loc_params, connector_id, lcpl_id, lapl_id, dxpl_id, req, arguments);
-    va_end(arguments);
-
-    return ret_value;
-} /* end H5VL_provenance_link_create_reissue() */
-
-
-/*-------------------------------------------------------------------------
  * Function:    H5VL_provenance_link_create
  *
  * Purpose:     Creates a hard / soft / UD / external link.
@@ -4615,14 +4592,16 @@ H5VL_provenance_link_create_reissue(H5VL_link_create_type_t create_type,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_link_create(H5VL_link_create_type_t create_type, void *obj,
+static herr_t
+H5VL_provenance_link_create(H5VL_link_create_args_t *args, void *obj,
     const H5VL_loc_params_t *loc_params, hid_t lcpl_id, hid_t lapl_id,
-    hid_t dxpl_id, void **req, va_list arguments)
+    hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
 
+    H5VL_link_create_args_t my_args;
+    H5VL_link_create_args_t *new_args;
     H5VL_provenance_t *o = (H5VL_provenance_t *)obj;
     hid_t under_vol_id = -1;
     herr_t ret_value;
@@ -4636,34 +4615,32 @@ H5VL_provenance_link_create(H5VL_link_create_type_t create_type, void *obj,
         under_vol_id = o->under_vol_id;
 
     /* Fix up the link target object for hard link creation */
-    if(H5VL_LINK_CREATE_HARD == create_type) {
-        void         *cur_obj;
-        H5VL_loc_params_t cur_params;
+    if(H5VL_LINK_CREATE_HARD == args->op_type) {
+        /* If it's a non-NULL pointer, find the 'under object' and re-set the args */
+        if(args->args.hard.curr_obj) {
+            /* Make a (shallow) copy of the arguments */
+            memcpy(&my_args, args, sizeof(my_args));
 
-        /* Retrieve the object & loc params for the link target */
-        cur_obj = va_arg(arguments, void *);
-        cur_params = va_arg(arguments, H5VL_loc_params_t);
-
-        /* If it's a non-NULL pointer, find the 'under object' and re-set the property */
-        if(cur_obj) {
             /* Check if we still need the "under" VOL ID */
             if(under_vol_id < 0)
-                under_vol_id = ((H5VL_provenance_t *)cur_obj)->under_vol_id;
+                under_vol_id = ((H5VL_provenance_t *)args->args.hard.curr_obj)->under_vol_id;
 
             /* Set the object for the link target */
-            cur_obj = ((H5VL_provenance_t *)cur_obj)->under_object;
-        } /* end if */
+            my_args.args.hard.curr_obj = ((H5VL_provenance_t *)args->args.hard.curr_obj)->under_object;
 
-        /* Re-issue 'link create' call, using the unwrapped pieces */
-        m1 = get_time_usec();
-        ret_value = H5VL_provenance_link_create_reissue(create_type, (o ? o->under_object : NULL), loc_params, under_vol_id, lcpl_id, lapl_id, dxpl_id, req, cur_obj, cur_params);
-        m2 = get_time_usec();
+            /* Set argument pointer to modified parameters */
+            new_args = &my_args;
+        } /* end if */
+        else
+            new_args = args;
     } /* end if */
-    else {
-        m1 = get_time_usec();
-        ret_value = H5VLlink_create(create_type, (o ? o->under_object : NULL), loc_params, under_vol_id, lcpl_id, lapl_id, dxpl_id, req, arguments);
-        m2 = get_time_usec();
-    } /* end else */
+    else
+        new_args = args;
+
+    /* Re-issue 'link create' call, possibly using the unwrapped pieces */
+    m1 = get_time_usec();
+    ret_value = H5VLlink_create(new_args, (o ? o->under_object : NULL), loc_params, under_vol_id, lcpl_id, lapl_id, dxpl_id, req);
+    m2 = get_time_usec();
 
     /* Check for async request */
     if(req && *req)
@@ -4692,7 +4669,7 @@ H5VL_provenance_link_create(H5VL_link_create_type_t create_type, void *obj,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_link_copy(void *src_obj, const H5VL_loc_params_t *loc_params1,
     void *dst_obj, const H5VL_loc_params_t *loc_params2, hid_t lcpl_id,
     hid_t lapl_id, hid_t dxpl_id, void **req)
@@ -4723,7 +4700,7 @@ H5VL_provenance_link_copy(void *src_obj, const H5VL_loc_params_t *loc_params1,
     /* Check for async request */
     if(req && *req)
         *req = H5VL_provenance_new_obj(*req, under_vol_id, o_dst->prov_helper);
-            
+
     if(o_dst)
         prov_write(o_dst->prov_helper, __func__, get_time_usec() - start);
 
@@ -4747,7 +4724,7 @@ H5VL_provenance_link_copy(void *src_obj, const H5VL_loc_params_t *loc_params1,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_link_move(void *src_obj, const H5VL_loc_params_t *loc_params1,
     void *dst_obj, const H5VL_loc_params_t *loc_params2, hid_t lcpl_id,
     hid_t lapl_id, hid_t dxpl_id, void **req)
@@ -4797,9 +4774,9 @@ H5VL_provenance_link_move(void *src_obj, const H5VL_loc_params_t *loc_params1,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_link_get(void *obj, const H5VL_loc_params_t *loc_params,
-    H5VL_link_get_t get_type, hid_t dxpl_id, void **req, va_list arguments)
+    H5VL_link_get_args_t *args, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -4812,13 +4789,13 @@ H5VL_provenance_link_get(void *obj, const H5VL_loc_params_t *loc_params,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLlink_get(o->under_object, loc_params, o->under_vol_id, get_type, dxpl_id, req, arguments);
+    ret_value = H5VLlink_get(o->under_object, loc_params, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
     if(req && *req)
         *req = H5VL_provenance_new_obj(*req, o->under_vol_id, o->prov_helper);
-            
+
     if(o)
         prov_write(o->prov_helper, __func__, get_time_usec() - start);
 
@@ -4837,9 +4814,9 @@ H5VL_provenance_link_get(void *obj, const H5VL_loc_params_t *loc_params,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_link_specific(void *obj, const H5VL_loc_params_t *loc_params,
-    H5VL_link_specific_t specific_type, hid_t dxpl_id, void **req, va_list arguments)
+    H5VL_link_specific_args_t *args, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -4852,7 +4829,7 @@ H5VL_provenance_link_specific(void *obj, const H5VL_loc_params_t *loc_params,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLlink_specific(o->under_object, loc_params, o->under_vol_id, specific_type, dxpl_id, req, arguments);
+    ret_value = H5VLlink_specific(o->under_object, loc_params, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -4878,8 +4855,8 @@ H5VL_provenance_link_specific(void *obj, const H5VL_loc_params_t *loc_params,
  *-------------------------------------------------------------------------
  */
 static herr_t
-H5VL_provenance_link_optional(void *obj, H5VL_attr_optional_t opt_type, 
-                              hid_t dxpl_id, void **req, va_list arguments)
+H5VL_provenance_link_optional(void *obj, const H5VL_loc_params_t *loc_params,
+                H5VL_optional_args_t *args, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -4892,8 +4869,7 @@ H5VL_provenance_link_optional(void *obj, H5VL_attr_optional_t opt_type,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLlink_optional(o->under_object, opt_type, o->under_vol_id, 
-                                  dxpl_id, req, arguments);
+    ret_value = H5VLlink_optional(o->under_object, loc_params, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -4967,7 +4943,7 @@ H5VL_provenance_object_open(void *obj, const H5VL_loc_params_t *loc_params,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_object_copy(void *src_obj, const H5VL_loc_params_t *src_loc_params,
     const char *src_name, void *dst_obj, const H5VL_loc_params_t *dst_loc_params,
     const char *dst_name, hid_t ocpypl_id, hid_t lcpl_id, hid_t dxpl_id,
@@ -5010,8 +4986,8 @@ H5VL_provenance_object_copy(void *src_obj, const H5VL_loc_params_t *src_loc_para
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_object_get(void *obj, const H5VL_loc_params_t *loc_params, H5VL_object_get_t get_type, hid_t dxpl_id, void **req, va_list arguments)
+static herr_t
+H5VL_provenance_object_get(void *obj, const H5VL_loc_params_t *loc_params, H5VL_object_get_args_t *args, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -5024,7 +5000,7 @@ H5VL_provenance_object_get(void *obj, const H5VL_loc_params_t *loc_params, H5VL_
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLobject_get(o->under_object, loc_params, o->under_vol_id, get_type, dxpl_id, req, arguments);
+    ret_value = H5VLobject_get(o->under_object, loc_params, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -5049,10 +5025,9 @@ H5VL_provenance_object_get(void *obj, const H5VL_loc_params_t *loc_params, H5VL_
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_object_specific(void *obj, const H5VL_loc_params_t *loc_params,
-    H5VL_object_specific_t specific_type, hid_t dxpl_id, void **req,
-    va_list arguments)
+    H5VL_object_specific_args_t *args, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -5061,7 +5036,6 @@ H5VL_provenance_object_specific(void *obj, const H5VL_loc_params_t *loc_params,
     void *under_obj = NULL;
     hid_t under_vol_id = -1;
     prov_helper_t *helper = NULL;
-    va_list my_arguments;
     object_prov_info_t *my_prov_info = NULL;
     H5I_type_t my_type;         //obj type, dataset, datatype, etc.,
     herr_t ret_value;
@@ -5071,11 +5045,7 @@ H5VL_provenance_object_specific(void *obj, const H5VL_loc_params_t *loc_params,
 #endif
 
     // Check if refreshing
-    if(specific_type == H5VL_OBJECT_REFRESH) {
-        // Make a copy of the argument list for later use, after the underlying
-        // refresh operation completes
-        va_copy(my_arguments, arguments);
-
+    if(args->op_type == H5VL_OBJECT_REFRESH) {
         // Save prov info for later, and increment the refcount on it,
         // so that the stats aren't lost when the object is closed and reopened
         // during the underlying refresh operation
@@ -5091,10 +5061,10 @@ H5VL_provenance_object_specific(void *obj, const H5VL_loc_params_t *loc_params,
     my_type = o->my_type;
 
     m1 = get_time_usec();
-    ret_value = H5VLobject_specific(o->under_object, loc_params, o->under_vol_id, specific_type, dxpl_id, req, arguments);
+    ret_value = H5VLobject_specific(o->under_object, loc_params, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
-    if(specific_type == H5VL_OBJECT_REFRESH) {
+    if(args->op_type == H5VL_OBJECT_REFRESH) {
         // Sanity check
         assert(my_prov_info);
 
@@ -5113,7 +5083,7 @@ H5VL_provenance_object_specific(void *obj, const H5VL_loc_params_t *loc_params,
                 hid_t space_id;
 
                 // Get dataset ID from arg list
-                dataset_id = va_arg(my_arguments, hid_t);
+                dataset_id = args->args.refresh.obj_id;
 
                 // Cast object prov info into a dataset prov info
                 my_dataset_info = (dataset_prov_info_t *)my_prov_info;
@@ -5127,9 +5097,6 @@ H5VL_provenance_object_specific(void *obj, const H5VL_loc_params_t *loc_params,
                 // Don't close dataset ID, it's owned by the application
             }
         }
-
-        // Finish use of copied vararg list
-        va_end(my_arguments);
 
         // Decrement refcount on object info
         if(my_type == H5I_DATASET)
@@ -5165,9 +5132,9 @@ H5VL_provenance_object_specific(void *obj, const H5VL_loc_params_t *loc_params,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_object_optional(void *obj, H5VL_attr_optional_t opt_type, 
-                                hid_t dxpl_id, void **req, va_list arguments)
+static herr_t
+H5VL_provenance_object_optional(void *obj, const H5VL_loc_params_t *loc_params,
+                                H5VL_optional_args_t *args, hid_t dxpl_id, void **req)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -5180,8 +5147,7 @@ H5VL_provenance_object_optional(void *obj, H5VL_attr_optional_t opt_type,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLobject_optional(o->under_object, opt_type, o->under_vol_id, 
-                                    dxpl_id, req, arguments);
+    ret_value = H5VLobject_optional(o->under_object, loc_params, o->under_vol_id, args, dxpl_id, req);
     m2 = get_time_usec();
 
     /* Check for async request */
@@ -5266,7 +5232,7 @@ H5VL_provenance_introspect_opt_query(void *obj, H5VL_subclass_t cls,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_request_wait(void *obj, uint64_t timeout,
     H5VL_request_status_t *status)
 {
@@ -5308,7 +5274,7 @@ H5VL_provenance_request_wait(void *obj, uint64_t timeout,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_request_notify(void *obj, H5VL_request_notify_t cb, void *ctx)
 {
     unsigned long start = get_time_usec();
@@ -5348,7 +5314,7 @@ H5VL_provenance_request_notify(void *obj, H5VL_request_notify_t cb, void *ctx)
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_request_cancel(void *obj, H5VL_request_status_t *status)
 {
     unsigned long start = get_time_usec();
@@ -5386,9 +5352,8 @@ H5VL_provenance_request_cancel(void *obj, H5VL_request_status_t *status)
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_request_specific(void *obj, H5VL_request_specific_t specific_type,
-    va_list arguments)
+static herr_t
+H5VL_provenance_request_specific(void *obj, H5VL_request_specific_args_t *args)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -5401,7 +5366,7 @@ H5VL_provenance_request_specific(void *obj, H5VL_request_specific_t specific_typ
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLrequest_specific(o->under_object, o->under_vol_id, specific_type, arguments);
+    ret_value = H5VLrequest_specific(o->under_object, o->under_vol_id, args);
     m2 = get_time_usec();
 
     if(o)
@@ -5422,9 +5387,8 @@ H5VL_provenance_request_specific(void *obj, H5VL_request_specific_t specific_typ
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
-H5VL_provenance_request_optional(void *obj, H5VL_attr_optional_t opt_type,
-                                 va_list arguments)
+static herr_t
+H5VL_provenance_request_optional(void *obj, H5VL_optional_args_t *args)
 {
     unsigned long start = get_time_usec();
     unsigned long m1, m2;
@@ -5437,8 +5401,7 @@ H5VL_provenance_request_optional(void *obj, H5VL_attr_optional_t opt_type,
 #endif
 
     m1 = get_time_usec();
-    ret_value = H5VLrequest_optional(o->under_object, opt_type, 
-                                     o->under_vol_id, arguments);
+    ret_value = H5VLrequest_optional(o->under_object, o->under_vol_id, args);
     m2 = get_time_usec();
 
     if(o)
@@ -5460,7 +5423,7 @@ H5VL_provenance_request_optional(void *obj, H5VL_attr_optional_t opt_type,
  *
  *-------------------------------------------------------------------------
  */
-static herr_t 
+static herr_t
 H5VL_provenance_request_free(void *obj)
 {
     unsigned long start = get_time_usec();
@@ -5552,7 +5515,7 @@ H5VL_provenance_blob_get(void *obj, const void *blob_id, void *buf,
  */
 herr_t
 H5VL_provenance_blob_specific(void *obj, void *blob_id,
-    H5VL_blob_specific_t specific_type, va_list arguments)
+    H5VL_blob_specific_args_t *args)
 {
     H5VL_provenance_t *o = (H5VL_provenance_t *)obj;
     herr_t ret_value;
@@ -5561,8 +5524,7 @@ H5VL_provenance_blob_specific(void *obj, void *blob_id,
     printf("------- PROVENANCE VOL BLOB Specific\n");
 #endif
 
-    ret_value = H5VLblob_specific(o->under_object, o->under_vol_id, blob_id,
-        specific_type, arguments);
+    ret_value = H5VLblob_specific(o->under_object, o->under_vol_id, blob_id, args);
 
     return ret_value;
 } /* end H5VL_provenance_blob_specific() */
@@ -5578,8 +5540,7 @@ H5VL_provenance_blob_specific(void *obj, void *blob_id,
  *-------------------------------------------------------------------------
  */
 herr_t
-H5VL_provenance_blob_optional(void *obj, void *blob_id,
-    H5VL_blob_optional_t opt_type, va_list arguments)
+H5VL_provenance_blob_optional(void *obj, void *blob_id, H5VL_optional_args_t *args)
 {
     H5VL_provenance_t *o = (H5VL_provenance_t *)obj;
     herr_t ret_value;
@@ -5588,8 +5549,7 @@ H5VL_provenance_blob_optional(void *obj, void *blob_id,
     printf("------- PROVENANCE VOL BLOB Optional\n");
 #endif
 
-    ret_value = H5VLblob_optional(o->under_object, o->under_vol_id, blob_id,
-        opt_type, arguments);
+    ret_value = H5VLblob_optional(o->under_object, o->under_vol_id, blob_id, args);
 
     return ret_value;
 } /* end H5VL_provenance_blob_optional() */
@@ -5701,9 +5661,8 @@ H5VL_provenance_token_from_str(void *obj, H5I_type_t obj_type,
  *
  *-------------------------------------------------------------------------
  */
-herr_t
-H5VL_provenance_optional(void *obj, int op_type, hid_t dxpl_id, void **req,
-    va_list arguments)
+static herr_t
+H5VL_provenance_optional(void *obj, H5VL_optional_args_t *args, hid_t dxpl_id, void **req)
 {
     H5VL_provenance_t *o = (H5VL_provenance_t *)obj;
     herr_t ret_value;
@@ -5712,8 +5671,7 @@ H5VL_provenance_optional(void *obj, int op_type, hid_t dxpl_id, void **req,
     printf("------- PROVENANCE VOL generic Optional\n");
 #endif
 
-    ret_value = H5VLoptional(o->under_object, o->under_vol_id, op_type,
-        dxpl_id, req, arguments);
+    ret_value = H5VLoptional(o->under_object, o->under_vol_id, args, dxpl_id, req);
 
     return ret_value;
 } /* end H5VL_provenance_optional() */

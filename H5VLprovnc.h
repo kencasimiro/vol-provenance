@@ -18,33 +18,31 @@
 #define _H5VLprovnc_H
 
 /* Identifier for the pass-through VOL connector */
-#define H5VL_PROVNC	(H5VL_provenance_register())
+#define H5VL_PROVNC (H5VL_provenance_register())
 
 /* Characteristics of the pass-through VOL connector */
-#define H5VL_PROVNC_NAME        "provenance"
-#define H5VL_PROVNC_VALUE       509           /* VOL connector ID */
-#define H5VL_PROVNC_VERSION     0
-
+#define H5VL_PROVNC_NAME    "provenance"
+#define H5VL_PROVNC_VALUE   509 /* VOL connector ID */
+#define H5VL_PROVNC_VERSION 0
 
 typedef enum ProvLevel {
-    Default, //no file write, only screen print
+    Default, // no file write, only screen print
     Print_only,
     File_only,
     File_and_print,
     Level3,
     Level4,
     Disabled
-}Prov_level;
+} Prov_level;
 
 /* Pass-through VOL connector info */
 typedef struct H5VL_provenance_info_t {
-    hid_t under_vol_id;         /* VOL ID for under VOL */
-    void *under_vol_info;       /* VOL info for under VOL */
-    char* prov_file_path;
+    hid_t      under_vol_id;   /* VOL ID for under VOL */
+    void *     under_vol_info; /* VOL info for under VOL */
+    char *     prov_file_path;
     Prov_level prov_level;
-    char* prov_line_format;
+    char *     prov_line_format;
 } H5VL_provenance_info_t;
-
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,4 +55,3 @@ H5_DLL hid_t H5VL_provenance_register(void);
 #endif
 
 #endif /* _H5VLprovnc_H */
-
